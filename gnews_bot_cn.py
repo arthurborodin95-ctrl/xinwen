@@ -17,7 +17,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 # Ключевые слова для фильтрации (через запятую)
 KEYWORDS_RAW = os.getenv("KEYWORDS", "")
-KEYWORDS = KEYWORDS = ["Логистика", "Китай", "Порт", "экономика"]
+KEYWORDS = ["Логистика", "Китай", "Порт", "экономика"]
 # Если переменная не задана или пуста, фильтрация не применяется
 if not KEYWORDS:
     print("Ключевые слова не заданы. Будут отправляться все новости.")
