@@ -9,21 +9,21 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from playwright.async_api import async_playwright, Playwright, Browser
 from datetime import datetime, timezone, timedelta
+import feedparser
+import hashlib
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 # Ключевые слова для фильтрации (через запятую)
 KEYWORDS_RAW = os.getenv("KEYWORDS", "")
-KEYWORDS = ["Логистика", "Китай", "Порт", "экономика"]
-# Если переменная не задана или пуста, фильтрация не применяется
+KEYWORDS = [kw.strip() for kw in KEYWORDS_RAW.split(',') if kw.strip()]
 if not KEYWORDS:
     print("Ключевые слова не заданы. Будут отправляться все новости.")
 
-if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GNEWS_API_KEY]):
-    print("Ошибка: не все переменные окружения заданы.")
+if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+    print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
     exit()
 
 # --- Конфигурация ---
@@ -36,6 +36,17 @@ CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
+
+# --- Список RSS-лент (редактируйте под свои нужды) ---
+RSS_FEEDS = [
+    "https://ria.ru/export/rss2/index.xml",          # РИА Новости
+    "https://tass.ru/rss/v2.xml",                    # ТАСС
+    "https://www.interfax.ru/rss.asp",               # Интерфакс
+    "https://lenta.ru/rss",                          # Lenta.ru
+    "https://www.gazeta.ru/export/rss/first.xml",    # Газета.ru
+    # Добавьте другие источники
+]
+MAX_ARTICLES_PER_FEED = 5  # сколько брать с каждой ленты за один запуск
 
 # --- Форматирование времени ---
 def format_time(time_str: str) -> str:
@@ -72,34 +83,88 @@ def save_sent_title(article_title):
     with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
         f.write(article_title + '\n')
 
-# --- Получение новостей с фильтрацией ---
-def get_gnews_news():
-    print("Запрос новостей из GNews API (Россия)...")
-    url = f"https://gnews.io/api/v4/top-headlines?lang=ru&country=ru&max=10&apikey={GNEWS_API_KEY}"
-    try:
-        response = requests.get(url, timeout=15)
-        if response.status_code != 200:
-            print(f"GNews вернул статус {response.status_code}")
-            return []
-        articles = response.json().get("articles", [])
-        if not KEYWORDS:
-            print(f"Получено {len(articles)} статей (фильтр отключён).")
-            return articles
+# --- Получение новостей из RSS (вместо GNews) ---
+def get_news_from_rss():
+    """Собирает новости из всех RSS-лент, сортирует по дате, возвращает список (формат совместим с GNews)."""
+    all_articles = []
+    seen_urls = set()
 
-        filtered = []
-        for article in articles:
-            title = article.get("title", "")
-            description = article.get("description", "")
-            content = (title + " " + description).lower()
-            if any(kw.lower() in content for kw in KEYWORDS):
-                filtered.append(article)
-        print(f"Получено {len(articles)} статей, после фильтрации осталось {len(filtered)}.")
-        return filtered
-    except Exception as e:
-        print(f"Ошибка при запросе к GNews: {e}")
-        return []
+    for feed_url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            print(f"Парсинг RSS: {feed_url}, найдено {len(feed.entries)} записей.")
+            for entry in feed.entries[:MAX_ARTICLES_PER_FEED]:
+                # Проверяем наличие ссылки и заголовка
+                if not entry.get('link') or not entry.get('title'):
+                    continue
+                if entry.link in seen_urls:
+                    continue
+                seen_urls.add(entry.link)
 
-# --- Парсинг полной статьи ---
+                # Дата публикации
+                pub_date_iso = None
+                if entry.get('published_parsed'):
+                    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                    pub_date_iso = dt.isoformat()
+                elif entry.get('published'):
+                    pub_date_iso = entry.published
+                else:
+                    pub_date_iso = datetime.now(timezone.utc).isoformat()
+
+                # Описание
+                description = entry.get('summary', '') or entry.get('description', '')
+
+                # Изображение (если есть)
+                image_url = None
+                if 'media_content' in entry and entry.media_content:
+                    image_url = entry.media_content[0].get('url')
+                elif 'links' in entry:
+                    for link in entry.links:
+                        if link.get('type', '').startswith('image'):
+                            image_url = link.get('href')
+                            break
+
+                # Название источника (из фида)
+                source_name = feed.feed.get('title', 'Неизвестный источник')
+
+                article = {
+                    'title': entry.title,
+                    'url': entry.link,
+                    'description': description,
+                    'publishedAt': pub_date_iso,
+                    'source': {'name': source_name},
+                    'image': image_url,
+                }
+                all_articles.append(article)
+        except Exception as e:
+            print(f"Ошибка при парсинге RSS {feed_url}: {e}")
+
+    # Сортируем по дате (новые сверху)
+    def get_date(article):
+        try:
+            return datetime.fromisoformat(article.get('publishedAt', ''))
+        except:
+            return datetime.min
+
+    all_articles.sort(key=get_date, reverse=True)
+    print(f"Всего собрано {len(all_articles)} статей из RSS.")
+    return all_articles
+
+# --- Фильтрация по ключевым словам (применяется после получения) ---
+def filter_articles_by_keywords(articles):
+    if not KEYWORDS:
+        return articles
+    filtered = []
+    for article in articles:
+        title = article.get("title", "")
+        description = article.get("description", "")
+        content = (title + " " + description).lower()
+        if any(kw.lower() in content for kw in KEYWORDS):
+            filtered.append(article)
+    print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
+    return filtered
+
+# --- Парсинг полной статьи (без изменений) ---
 async def scrape_article_details(page, url: str) -> tuple[str, str]:
     pub_time, summary = "", ""
     try:
@@ -214,13 +279,18 @@ async def main():
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
         sent_urls = load_sent_urls()
         sent_titles = load_sent_titles()
-        news_articles = get_gnews_news()
 
-        if not news_articles:
-            print("Новостей от API не получено или все отфильтрованы.")
+        # Получаем новости из RSS
+        all_news = get_news_from_rss()
+        # Фильтруем по ключевым словам
+        filtered_news = filter_articles_by_keywords(all_news)
+
+        if not filtered_news:
+            print("Нет новостей после фильтрации.")
         else:
+            # Убираем уже отправленные
             new_articles = [
-                article for article in reversed(news_articles)
+                article for article in filtered_news
                 if article.get('url') not in sent_urls and article.get('title') not in sent_titles
             ]
             if not new_articles:
