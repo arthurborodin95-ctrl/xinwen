@@ -8,77 +8,110 @@ from dotenv import load_dotenv
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from playwright.async_api import async_playwright, Playwright, Browser
-import jieba
-import jieba.analyse
 from datetime import datetime, timezone, timedelta
 
 # --- 配置加载 ---
-# 在云端环境中，这些变量会由平台的环境变量设置注入
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY")
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GNEWS_API_KEY]):
-    print("错误：配置信息未能完全加载。请检查环境变量是否已正确设置。")
+    print("Ошибка: не все переменные окружения заданы.")
     exit()
 
-# --- 策略与配置 ---
+# --- Стратегия и конфигурация ---
 MAX_ARTICLES_TO_SEND = 3
-SEND_INTERVAL_SECONDS = 20 # 在单次运行中发送多条消息的间隔
+SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
-CHANNEL_TOPIC_HEADER = "【东方西方新闻】"
-CONTACT_LINK_TEXT = "联系投稿"
+CHANNEL_TOPIC_HEADER = "🇷🇺 Новости России"           # изменено
+CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
-GROUP_LINK_TEXT = "加入讨论群"
+GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 
-# --- 时间格式化函数 ---
-def format_china_time(time_str: str) -> str:
+# --- Форматирование времени (оставим привычный формат, но можно изменить) ---
+def format_time(time_str: str) -> str:
     if not time_str:
-        return "未知"
+        return "неизвестно"
     try:
         if time_str.endswith('Z'):
             time_str = time_str[:-1] + '+00:00'
         dt_object = datetime.fromisoformat(time_str)
-        china_tz = timezone(timedelta(hours=8))
-        dt_object_china = dt_object.astimezone(china_tz)
-        return dt_object_china.strftime('%Y年%m月%d日 %H:%M')
+        # Переводим в московское время (UTC+3)
+        msk_tz = timezone(timedelta(hours=3))
+        dt_object_msk = dt_object.astimezone(msk_tz)
+        return dt_object_msk.strftime('%d.%m.%Y %H:%M')  # российский формат
     except (ValueError, TypeError):
         return time_str.split('T')[0]
 
-# --- 辅助与抓取函数 (保持不变) ---
+# --- Работа с уже отправленными ---
 def load_sent_urls():
-    if not os.path.exists(SENT_ARTICLES_FILE): return set()
-    with open(SENT_ARTICLES_FILE, 'r', encoding='utf-8') as f: return set(line.strip() for line in f)
+    if not os.path.exists(SENT_ARTICLES_FILE):
+        return set()
+    with open(SENT_ARTICLES_FILE, 'r', encoding='utf-8') as f:
+        return set(line.strip() for line in f)
+
 def save_sent_url(article_url):
-    with open(SENT_ARTICLES_FILE, 'a', encoding='utf-8') as f: f.write(article_url + '\n')
+    with open(SENT_ARTICLES_FILE, 'a', encoding='utf-8') as f:
+        f.write(article_url + '\n')
+
 def load_sent_titles():
-    if not os.path.exists(SENT_TITLES_FILE): return set()
-    with open(SENT_TITLES_FILE, 'r', encoding='utf-8') as f: return set(line.strip() for line in f)
+    if not os.path.exists(SENT_TITLES_FILE):
+        return set()
+    with open(SENT_TITLES_FILE, 'r', encoding='utf-8') as f:
+        return set(line.strip() for line in f)
+
 def save_sent_title(article_title):
-    with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f: f.write(article_title + '\n')
+    with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
+        f.write(article_title + '\n')
+
+# --- Получение новостей через GNews (теперь Россия) ---
 def get_gnews_news():
-    print("正在从 GNews API 获取最新新闻...")
-    url = f"https://gnews.io/api/v4/top-headlines?lang=zh&country=cn&max=10&apikey={GNEWS_API_KEY}"
+    print("Запрос новостей из GNews API (Россия)...")
+    url = f"https://gnews.io/api/v4/top-headlines?lang=ru&country=ru&max=10&apikey={GNEWS_API_KEY}"
     try:
         response = requests.get(url, timeout=15)
-        if response.status_code != 200: return []
+        if response.status_code != 200:
+            print(f"GNews вернул статус {response.status_code}")
+            return []
         return response.json().get("articles", [])
     except Exception as e:
-        print(f"从GNews API获取新闻时出错: {e}")
+        print(f"Ошибка при запросе к GNews: {e}")
         return []
+
+# --- Парсинг полной статьи (без изменений) ---
 async def scrape_article_details(page, url: str) -> tuple[str, str]:
     pub_time, summary = "", ""
     try:
         await page.goto(url, timeout=30000, wait_until='domcontentloaded')
-        time_selectors = ['meta[property="article:published_time"]','meta[name="publish-date"]','time','.pub_date','.post-time','.time-source .time']
+        time_selectors = [
+            'meta[property="article:published_time"]',
+            'meta[name="publish-date"]',
+            'time',
+            '.pub_date',
+            '.post-time',
+            '.time-source .time'
+        ]
         for selector in time_selectors:
             element = await page.query_selector(selector)
             if element:
                 content = await element.get_attribute('content') or await element.get_attribute('datetime') or await element.inner_text()
-                if content: pub_time = content.strip(); break
-        content_selectors = ['article','.article-content','.post-body','.content','#article_content','#Content','.art-text','#main_content','div[class*="content-main"]','div[class*="article-body"]']
+                if content:
+                    pub_time = content.strip()
+                    break
+        content_selectors = [
+            'article',
+            '.article-content',
+            '.post-body',
+            '.content',
+            '#article_content',
+            '#Content',
+            '.art-text',
+            '#main_content',
+            'div[class*="content-main"]',
+            'div[class*="article-body"]'
+        ]
         for selector in content_selectors:
             content_element = await page.query_selector(selector)
             if content_element:
@@ -86,52 +119,60 @@ async def scrape_article_details(page, url: str) -> tuple[str, str]:
                 summary_parts = [await p.inner_text() for p in paragraphs[:5] if await p.inner_text()]
                 if summary_parts:
                     summary = "\n\n".join(summary_parts)
-                    if len(paragraphs) > 5: summary += "..."
+                    if len(paragraphs) > 5:
+                        summary += "..."
                     break
         return pub_time, summary
     except Exception as e:
-        print(f"抓取文章详情时出错: {url}, 错误: {e}")
+        print(f"Ошибка при парсинге статьи {url}: {e}")
         return pub_time, summary
 
-# --- 发送函数 (包含详细日志和最终排版) ---
+# --- Отправка одной новости (убрали jieba) ---
 async def send_single_article(bot, article, pub_time: str, summary: str):
-    title, url, image_url = article.get('title'), article.get('url'), article.get('image')
-    source_name = article.get('source', {}).get('name', '未知来源')
-    if not title or not url: return False
-    
-    display_time = format_china_time(pub_time) if pub_time else format_china_time(article.get('publishedAt'))
-    
-    tags = jieba.analyse.extract_tags(title, topK=3)
-    filtered_tags = [tag for tag in tags if not tag.isdigit()]
-    hashtags = " ".join([f"#{tag}" for tag in filtered_tags]) if filtered_tags else ""
-    
+    title = article.get('title')
+    url = article.get('url')
+    image_url = article.get('image')
+    source_name = article.get('source', {}).get('name', 'Неизвестный источник')
+    if not title or not url:
+        return False
+
+    display_time = format_time(pub_time) if pub_time else format_time(article.get('publishedAt'))
+
+    # --- Генерация хештегов без jieba (берём первые два значимых слова) ---
+    # Удаляем знаки препинания и берём первые 2 слова
+    clean_title = re.sub(r'[^\w\s]', '', title)
+    words = clean_title.split()[:2]
+    hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
+
+    # Формируем краткое содержание
     summary_text = summary if summary else article.get('description', '')
-    if summary_text and title in summary_text: 
+    if summary_text and title in summary_text:
         summary_text = ""
     if not summary_text:
-        summary_text = f"如需摘要，请<a href='{url}'>点击此处</a>阅览。"
+        summary_text = f"Подробнее: <a href='{url}'>читать полностью</a>."
 
     caption_parts = [
         f"{CHANNEL_TOPIC_HEADER} {hashtags}\n",
         f"<b>{title}</b>\n",
         summary_text,
         "",
-        f"详细信息：<a href='{url}'>点击阅读原文</a>",
-        f"发布时间：{display_time}",
-        f"信息来源：<a href='{url}'>{source_name}</a>",
-        f"投稿联系：<a href='{CONTACT_LINK_URL}'>{CONTACT_LINK_TEXT}</a>",
-        f"💬 欢迎加入交流群讨论：<a href='{GROUP_LINK_URL}'>{GROUP_LINK_TEXT}</a>"
+        f"Источник: <a href='{url}'>{source_name}</a>",
+        f"Опубликовано: {display_time}",
+        f"Связаться: <a href='{CONTACT_LINK_URL}'>{CONTACT_LINK_TEXT}</a>",
+        f"💬 Обсудить в чате: <a href='{GROUP_LINK_URL}'>{GROUP_LINK_TEXT}</a>"
     ]
     caption = "\n".join(part for part in caption_parts if part.strip() or part == "")
 
+    # Обрезаем, если длиннее 1024 символов
     if len(caption) > 1024:
-        oversize = len(caption) - 1024
-        if "点击此处" not in summary_text:
-             summary_text = summary_text[:-(oversize + 5)] + "..."
-             caption_parts[2] = summary_text
-             caption = "\n".join(part for part in caption_parts if part.strip() or part == "")
+        # Сокращаем summary
+        if "Подробнее" not in summary_text:
+            oversize = len(caption) - 1024
+            summary_text = summary_text[:-(oversize + 5)] + "..."
+            caption_parts[2] = summary_text
+            caption = "\n".join(part for part in caption_parts if part.strip() or part == "")
         else:
-             caption = caption[:1020] + "..."
+            caption = caption[:1020] + "..."
 
     try:
         if image_url:
@@ -140,80 +181,80 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return True
     except Exception as e:
-        print(f"!!! 发送消息失败，错误原因: {e}")
+        print(f"Ошибка при отправке: {e}")
+        # Попытка отправить без форматирования
         try:
-            print("--- 正在尝试发送纯文本版本... ---")
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             return True
         except Exception as fallback_e:
-            print(f"!!! 发送纯文本版本也失败了，最终错误原因: {fallback_e}")
+            print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- ★★★ 主程序 (已优化为单次运行并确保浏览器关闭) ★★★ ---
+# --- Основная функция ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-    print("GNews Bot Service Started (Single Run for Serverless Environment)")
-    
-    browser: Browser | None = None
+    print("Бот запущен (однократный запуск для serverless).")
+
+    browser = None
     try:
-        print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Starting new articles check ---")
+        print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
         sent_urls = load_sent_urls()
         sent_titles = load_sent_titles()
         news_articles = get_gnews_news()
 
         if not news_articles:
-            print("No news received from API.")
+            print("Новостей от API не получено.")
         else:
-            new_articles_found = [article for article in reversed(news_articles) if article.get('url') not in sent_urls and article.get('title') not in sent_titles]
-            if not new_articles_found:
-                print("No new articles found.")
+            new_articles = [
+                article for article in reversed(news_articles)
+                if article.get('url') not in sent_urls and article.get('title') not in sent_titles
+            ]
+            if not new_articles:
+                print("Новых статей нет.")
             else:
-                print(f"Found {len(new_articles_found)} new articles, preparing to process...")
+                print(f"Найдено {len(new_articles)} новых статей.")
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(headless=True)
                     page = await browser.new_page()
-                    
-                    articles_sent_count, sent_titles_this_run = 0, set()
-                    for article in new_articles_found:
-                        if articles_sent_count >= MAX_ARTICLES_TO_SEND:
-                            print(f"Reached send limit for this run ({MAX_ARTICLES_TO_SEND}).")
+
+                    sent_count = 0
+                    sent_titles_this_run = set()
+                    for article in new_articles:
+                        if sent_count >= MAX_ARTICLES_TO_SEND:
+                            print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
                             break
-                        
-                        current_title = article.get('title')
-                        if current_title in sent_titles_this_run:
-                            print(f"Duplicate title in this run, skipping: {current_title}")
-                            save_sent_url(article.get('url')) # Still save URL to prevent re-checking
+
+                        title = article.get('title')
+                        if title in sent_titles_this_run:
+                            print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
+                            save_sent_url(article.get('url'))  # всё равно запоминаем
                             continue
-                        
-                        print(f"Processing: {current_title}")
-                        publication_time, summary = await scrape_article_details(page, article.get('url'))
-                        
-                        if await send_single_article(bot, article, publication_time, summary):
+
+                        print(f"Обработка: {title}")
+                        pub_time, summary = await scrape_article_details(page, article.get('url'))
+
+                        if await send_single_article(bot, article, pub_time, summary):
                             save_sent_url(article.get('url'))
-                            save_sent_title(article.get('title'))
-                            sent_titles_this_run.add(current_title)
-                            articles_sent_count += 1
-                            print(f"Successfully sent ({articles_sent_count}/{MAX_ARTICLES_TO_SEND} in this run).")
-                            if articles_sent_count < MAX_ARTICLES_TO_SEND and articles_sent_count < len(new_articles_found):
+                            save_sent_title(title)
+                            sent_titles_this_run.add(title)
+                            sent_count += 1
+                            print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
+                            if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
                                 await asyncio.sleep(SEND_INTERVAL_SECONDS)
                         else:
-                            print(f"Failed to send: {current_title}")
-        
-        print(f"--- Task completed for this run. ---")
+                            print(f"Не удалось отправить: {title}")
 
+        print("--- Завершено ---")
     except Exception as e:
-        print(f"!!! A critical error occurred in the main function: {e} !!!")
-    
+        print(f"Критическая ошибка в main: {e}")
     finally:
-        # This block will always execute, ensuring the browser is closed.
         if browser:
-            print("Closing browser instance...")
+            print("Закрытие браузера...")
             await browser.close()
-            print("Browser closed successfully.")
-        print("Script execution finished.")
+            print("Браузер закрыт.")
 
 if __name__ == '__main__':
-    jieba.initialize()
+    # jieba больше не используется, инициализация не требуется
     asyncio.run(main())
 
 
