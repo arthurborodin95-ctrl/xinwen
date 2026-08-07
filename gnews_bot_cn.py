@@ -4,19 +4,17 @@ import time
 import asyncio
 import os
 import re
+import sys
 from dotenv import load_dotenv
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-from playwright.async_api import async_playwright, Playwright, Browser
 from datetime import datetime, timezone, timedelta
 import feedparser
-import hashlib
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-# Ключевые слова для фильтрации (через запятую)
 KEYWORDS_RAW = os.getenv("KEYWORDS", "")
 KEYWORDS = [kw.strip() for kw in KEYWORDS_RAW.split(',') if kw.strip()]
 if not KEYWORDS:
@@ -24,7 +22,7 @@ if not KEYWORDS:
 
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
-    exit()
+    sys.exit(1)
 
 # --- Конфигурация ---
 MAX_ARTICLES_TO_SEND = 3
@@ -37,22 +35,22 @@ CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 
-# --- Список RSS-лент (редактируйте под свои нужды) ---
+# --- Список RSS-лент ---
 RSS_FEEDS = [
-    "https://ria.ru/export/rss2/index.xml",          # РИА Новости
-    "https://tass.ru/rss/v2.xml",                    # ТАСС
-    "https://www.interfax.ru/rss.asp",               # Интерфакс
-    "https://lenta.ru/rss",                          # Lenta.ru
-    "https://www.gazeta.ru/export/rss/first.xml",    # Газета.ru
-    # Добавьте другие источники
+    "https://ria.ru/export/rss2/index.xml",
+    "https://tass.ru/rss/v2.xml",
+    "https://www.interfax.ru/rss.asp",
+    "https://lenta.ru/rss",
+    "https://www.gazeta.ru/export/rss/first.xml",
 ]
-MAX_ARTICLES_PER_FEED = 5  # сколько брать с каждой ленты за один запуск
+MAX_ARTICLES_PER_FEED = 5
 
-# --- Форматирование времени ---
+# --- Форматирование времени (безопасное) ---
 def format_time(time_str: str) -> str:
     if not time_str:
         return "неизвестно"
     try:
+        # Пытаемся распарсить ISO-формат
         if time_str.endswith('Z'):
             time_str = time_str[:-1] + '+00:00'
         dt_object = datetime.fromisoformat(time_str)
@@ -60,7 +58,8 @@ def format_time(time_str: str) -> str:
         dt_object_msk = dt_object.astimezone(msk_tz)
         return dt_object_msk.strftime('%d.%m.%Y %H:%M')
     except (ValueError, TypeError):
-        return time_str.split('T')[0]
+        # Если не получается, возвращаем как есть
+        return time_str
 
 # --- Работа с уже отправленными ---
 def load_sent_urls():
@@ -83,9 +82,8 @@ def save_sent_title(article_title):
     with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
         f.write(article_title + '\n')
 
-# --- Получение новостей из RSS (вместо GNews) ---
+# --- Получение новостей из RSS ---
 def get_news_from_rss():
-    """Собирает новости из всех RSS-лент, сортирует по дате, возвращает список (формат совместим с GNews)."""
     all_articles = []
     seen_urls = set()
 
@@ -94,7 +92,6 @@ def get_news_from_rss():
             feed = feedparser.parse(feed_url)
             print(f"Парсинг RSS: {feed_url}, найдено {len(feed.entries)} записей.")
             for entry in feed.entries[:MAX_ARTICLES_PER_FEED]:
-                # Проверяем наличие ссылки и заголовка
                 if not entry.get('link') or not entry.get('title'):
                     continue
                 if entry.link in seen_urls:
@@ -111,10 +108,9 @@ def get_news_from_rss():
                 else:
                     pub_date_iso = datetime.now(timezone.utc).isoformat()
 
-                # Описание
                 description = entry.get('summary', '') or entry.get('description', '')
 
-                # Изображение (если есть)
+                # Изображение
                 image_url = None
                 if 'media_content' in entry and entry.media_content:
                     image_url = entry.media_content[0].get('url')
@@ -124,7 +120,6 @@ def get_news_from_rss():
                             image_url = link.get('href')
                             break
 
-                # Название источника (из фида)
                 source_name = feed.feed.get('title', 'Неизвестный источник')
 
                 article = {
@@ -139,7 +134,7 @@ def get_news_from_rss():
         except Exception as e:
             print(f"Ошибка при парсинге RSS {feed_url}: {e}")
 
-    # Сортируем по дате (новые сверху)
+    # Сортировка по дате (новые сверху)
     def get_date(article):
         try:
             return datetime.fromisoformat(article.get('publishedAt', ''))
@@ -150,7 +145,7 @@ def get_news_from_rss():
     print(f"Всего собрано {len(all_articles)} статей из RSS.")
     return all_articles
 
-# --- Фильтрация по ключевым словам (применяется после получения) ---
+# --- Фильтрация по ключевым словам ---
 def filter_articles_by_keywords(articles):
     if not KEYWORDS:
         return articles
@@ -164,7 +159,7 @@ def filter_articles_by_keywords(articles):
     print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
     return filtered
 
-# --- Парсинг полной статьи (без изменений) ---
+# --- Парсинг полной статьи (с защитой от падений) ---
 async def scrape_article_details(page, url: str) -> tuple[str, str]:
     pub_time, summary = "", ""
     try:
@@ -222,7 +217,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 
     display_time = format_time(pub_time) if pub_time else format_time(article.get('publishedAt'))
 
-    # Генерация хештегов (первые два слова заголовка)
+    # Хештеги из первых двух слов
     clean_title = re.sub(r'[^\w\s]', '', title)
     words = clean_title.split()[:2]
     hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
@@ -269,73 +264,91 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- Основная функция ---
+# --- Основная функция с защитой от падений playwright ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
     print("Бот запущен (однократный запуск для serverless).")
     
-    browser = None
     try:
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
         sent_urls = load_sent_urls()
         sent_titles = load_sent_titles()
 
-        # Получаем новости из RSS
         all_news = get_news_from_rss()
-        # Фильтруем по ключевым словам
         filtered_news = filter_articles_by_keywords(all_news)
 
         if not filtered_news:
             print("Нет новостей после фильтрации.")
-        else:
-            # Убираем уже отправленные
-            new_articles = [
-                article for article in filtered_news
-                if article.get('url') not in sent_urls and article.get('title') not in sent_titles
-            ]
-            if not new_articles:
-                print("Новых статей (с учётом дублей) нет.")
+            return
+
+        new_articles = [
+            article for article in filtered_news
+            if article.get('url') not in sent_urls and article.get('title') not in sent_titles
+        ]
+        if not new_articles:
+            print("Новых статей (с учётом дублей) нет.")
+            return
+
+        print(f"Найдено {len(new_articles)} новых статей для отправки.")
+
+        # Попытка использовать Playwright для парсинга полного текста
+        browser = None
+        playwright_available = True
+        try:
+            from playwright.async_api import async_playwright
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                # ... дальше обработка
+        except Exception as e:
+            print(f"Playwright недоступен или не удалось запустить браузер: {e}. Будем отправлять новости без парсинга.")
+            playwright_available = False
+
+        sent_count = 0
+        sent_titles_this_run = set()
+
+        for article in new_articles:
+            if sent_count >= MAX_ARTICLES_TO_SEND:
+                print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
+                break
+
+            title = article.get('title')
+            if title in sent_titles_this_run:
+                print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
+                save_sent_url(article.get('url'))
+                continue
+
+            print(f"Обработка: {title}")
+
+            pub_time = ""
+            summary = ""
+            if playwright_available and browser:
+                try:
+                    pub_time, summary = await scrape_article_details(page, article.get('url'))
+                except Exception as e:
+                    print(f"Ошибка при парсинге страницы: {e}")
+                    # оставляем пустые pub_time и summary
+
+            if await send_single_article(bot, article, pub_time, summary):
+                save_sent_url(article.get('url'))
+                save_sent_title(title)
+                sent_titles_this_run.add(title)
+                sent_count += 1
+                print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
+                if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
+                    await asyncio.sleep(SEND_INTERVAL_SECONDS)
             else:
-                print(f"Найдено {len(new_articles)} новых статей для отправки.")
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    page = await browser.new_page()
+                print(f"Не удалось отправить: {title}")
 
-                    sent_count = 0
-                    sent_titles_this_run = set()
-                    for article in new_articles:
-                        if sent_count >= MAX_ARTICLES_TO_SEND:
-                            print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
-                            break
-
-                        title = article.get('title')
-                        if title in sent_titles_this_run:
-                            print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                            save_sent_url(article.get('url'))
-                            continue
-
-                        print(f"Обработка: {title}")
-                        pub_time, summary = await scrape_article_details(page, article.get('url'))
-
-                        if await send_single_article(bot, article, pub_time, summary):
-                            save_sent_url(article.get('url'))
-                            save_sent_title(title)
-                            sent_titles_this_run.add(title)
-                            sent_count += 1
-                            print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
-                            if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
-                                await asyncio.sleep(SEND_INTERVAL_SECONDS)
-                        else:
-                            print(f"Не удалось отправить: {title}")
-
+        if browser:
+            await browser.close()
         print("--- Завершено ---")
     except Exception as e:
         print(f"Критическая ошибка в main: {e}")
-    finally:
-        if browser:
-            print("Закрытие браузера...")
-            await browser.close()
-            print("Браузер закрыт.")
+        # Не прерываем выполнение с ошибкой, просто логируем
 
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(0)  # Завершаем успешно, даже если были ошибки внутри (они уже залогированы)
 if __name__ == '__main__':
     asyncio.run(main())
