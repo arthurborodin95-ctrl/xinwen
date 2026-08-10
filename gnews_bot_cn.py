@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from datetime import datetime, timezone, timedelta
 import feedparser
+from semantic_filter import build_topic_embedding, is_semantically_relevant_cached
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
@@ -36,6 +37,22 @@ if not KEYWORDS:
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
     sys.exit(1)
+    
+    # --- Построение эталонного вектора для семантического поиска ---
+topic_vector = None
+if KEYWORDS:
+    try:
+        print("Построение эталонного вектора для семантического поиска...")
+        topic_vector = build_topic_embedding(KEYWORDS)
+        if topic_vector is not None:
+            print("✅ Эталонный вектор успешно построен.")
+        else:
+            print("⚠️ Не удалось построить эталонный вектор. Семантический поиск будет отключён.")
+    except Exception as e:
+        print(f"❌ Ошибка при построении эталонного вектора: {e}")
+        topic_vector = None
+else:
+    print("⚠️ Ключевые слова не заданы. Семантический поиск отключён.")
 
 # --- Конфигурация ---
 MAX_ARTICLES_TO_SEND = 1000          # Большое число, чтобы отправлять все найденные
@@ -193,17 +210,48 @@ def get_news_from_rss():
     return all_articles
 
 # --- Фильтрация по ключевым словам ---
-def filter_articles_by_keywords(articles):
+def filter_articles_hybrid(articles):
+    """
+    Гибридная фильтрация:
+    1. Сначала проверяет по ключевым словам (быстро).
+    2. Если не прошло по ключевым словам — проверяет семантически (если доступно).
+    """
     if not KEYWORDS:
+        logger.info("Ключевые слова не заданы. Возвращаем все статьи.")
         return articles
+    
     filtered = []
+    # Счётчики для статистики
+    kw_matches = 0
+    semantic_matches = 0
+    
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
-        content = (title + " " + description).lower()
-        if any(kw.lower() in content for kw in KEYWORDS):
+        full_text = title + " " + description
+        content_lower = full_text.lower()
+        
+        # 1. Проверка по ключевым словам
+        kw_match = any(kw.lower() in content_lower for kw in KEYWORDS)
+        if kw_match:
             filtered.append(article)
-    print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
+            kw_matches += 1
+            continue
+        
+        # 2. Если ключевые слова не совпали — семантическая проверка
+        if topic_vector is not None and len(full_text) > 20:
+            try:
+                # Используем кэширующую версию для экономии ресурсов
+                if is_semantically_relevant_cached(full_text, topic_vector, threshold=0.7):
+                    filtered.append(article)
+                    semantic_matches += 1
+            except Exception as e:
+                print(f"  ⚠️ Ошибка семантической проверки: {e}")
+                # В случае ошибки не добавляем статью (можно добавить, если хотите быть более либеральным)
+    
+    print(f"После гибридной фильтрации осталось {len(filtered)} из {len(articles)} статей.")
+    print(f"  - По ключевым словам: {kw_matches}")
+    print(f"  - По семантике: {semantic_matches}")
     return filtered
 
 # --- Парсинг полной статьи ---
@@ -328,7 +376,7 @@ async def main():
             sent_titles = load_sent_titles()
 
             all_news = get_news_from_rss()
-            filtered_news = filter_articles_by_keywords(all_news)
+            filtered_news = filter_articles_hybrid(all_news)
 
             if not filtered_news:
                 print("Нет новостей после фильтрации.")
