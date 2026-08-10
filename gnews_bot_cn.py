@@ -112,29 +112,42 @@ def save_sent_title(article_title):
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
+    # Определяем границу времени: текущее время UTC минус 1 час
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
             print(f"Парсинг RSS: {feed_url}, найдено {len(feed.entries)} записей.")
-            for entry in feed.entries[:MAX_ARTICLES_PER_FEED]:
+            for entry in feed.entries[:MAX_ARTICLES_PER_FEED * 2]:  # берём с запасом
                 if not entry.get('link') or not entry.get('title'):
                     continue
                 if entry.link in seen_urls:
                     continue
+
+                # --- Фильтр по времени (последний час) ---
+                pub_date = None
+                if entry.get('published_parsed'):
+                    # published_parsed — это struct_time, преобразуем в datetime
+                    pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                elif entry.get('published'):
+                    # Пытаемся распарсить строку, но это сложнее, поэтому лучше использовать published_parsed
+                    # Если нет published_parsed, пропускаем запись (или считаем её свежей?)
+                    pass
+
+                # Если дата не определена или она старше 1 часа — пропускаем
+                if pub_date is None or pub_date < one_hour_ago:
+                    continue
+                # --- Конец фильтра ---
+
                 seen_urls.add(entry.link)
 
-                pub_date_iso = None
-                if entry.get('published_parsed'):
-                    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-                    pub_date_iso = dt.isoformat()
-                elif entry.get('published'):
-                    pub_date_iso = entry.published
-                else:
-                    pub_date_iso = datetime.now(timezone.utc).isoformat()
+                # Дата публикации (ISO-формат для единообразия)
+                pub_date_iso = pub_date.isoformat() if pub_date else None
 
                 description = entry.get('summary', '') or entry.get('description', '')
 
+                # Изображение
                 image_url = None
                 if 'media_content' in entry and entry.media_content:
                     image_url = entry.media_content[0].get('url')
@@ -158,6 +171,7 @@ def get_news_from_rss():
         except Exception as e:
             print(f"Ошибка при парсинге RSS {feed_url}: {e}")
 
+    # Сортировка по дате (новые сверху)
     def get_date(article):
         try:
             return datetime.fromisoformat(article.get('publishedAt', ''))
@@ -165,7 +179,7 @@ def get_news_from_rss():
             return datetime.min
 
     all_articles.sort(key=get_date, reverse=True)
-    print(f"Всего собрано {len(all_articles)} статей из RSS.")
+    print(f"Всего собрано {len(all_articles)} статей из RSS за последний час.")
     return all_articles
 
 # --- Фильтрация по ключевым словам ---
