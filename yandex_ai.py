@@ -123,25 +123,3 @@ def analyze_sentiment(title: str, content: str) -> dict:
         except:
             pass
     return {"sentiment": "neutral", "confidence": 0.5}
-    def get_embedding(text: str) -> list:
-    """
-    Получает векторное представление текста через YandexGPT Embeddings.
-    Документация: https://cloud.yandex.ru/docs/yandexgpt/api-ref/Embedding
-    """
-    url = "https://llm.api.cloud.yandex.net/embeddings"
-    headers = {
-        "Authorization": f"Api-Key {API_KEY}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "modelUri": f"emb://{FOLDER_ID}/text-embedding-004",  # или другая модель
-        "text": text[:500],  # ограничиваем длину для экономии
-    }
-    try:
-        response = requests.post(url, headers=headers, json=body, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("embedding", [])
-    except Exception as e:
-        print(f"Ошибка получения эмбеддинга: {e}")
-        return None
