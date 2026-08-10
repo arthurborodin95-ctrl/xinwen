@@ -55,7 +55,7 @@ else:
     print("⚠️ Ключевые слова не заданы. Семантический поиск отключён.")
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 1000
+MAX_ARTICLES_TO_SEND = 100
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
