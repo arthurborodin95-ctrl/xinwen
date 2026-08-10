@@ -24,7 +24,7 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     sys.exit(1)
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 3
+MAX_ARTICLES_TO_SEND = 8
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
