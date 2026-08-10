@@ -38,7 +38,7 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     sys.exit(1)
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 50
+MAX_ARTICLES_TO_SEND = 1000          # Большое число, чтобы отправлять все найденные
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -84,7 +84,7 @@ RSS_FEEDS = [
     "https://www.scmp.com/rss/",
     "https://tvbrics.com/feed/"
 ]
-MAX_ARTICLES_PER_FEED = 20
+MAX_ARTICLES_PER_FEED = 5
 
 # --- Форматирование времени ---
 def format_time(time_str: str) -> str:
@@ -121,10 +121,13 @@ def save_sent_title(article_title):
     with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
         f.write(article_title + '\n')
 
-# --- Получение новостей из RSS (без фильтра по времени) ---
+# --- Получение новостей из RSS с фильтром за последний час ---
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
+
+    # Определяем границу: 1 час назад
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for feed_url in RSS_FEEDS:
         try:
@@ -135,18 +138,23 @@ def get_news_from_rss():
                     continue
                 if entry.link in seen_urls:
                     continue
+
+                # --- Фильтр по времени (последний час) ---
+                pub_date = None
+                if entry.get('published_parsed'):
+                    pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                elif entry.get('published'):
+                    # Если дата есть, но не распарсилась — пропускаем
+                    pass
+
+                # Если дата отсутствует или старше 1 часа — пропускаем
+                if pub_date is None or pub_date < one_hour_ago:
+                    continue
+                # --- Конец фильтра ---
+
                 seen_urls.add(entry.link)
 
-                # Дата публикации
-                pub_date_iso = None
-                if entry.get('published_parsed'):
-                    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-                    pub_date_iso = dt.isoformat()
-                elif entry.get('published'):
-                    pub_date_iso = entry.published
-                else:
-                    pub_date_iso = datetime.now(timezone.utc).isoformat()
-
+                pub_date_iso = pub_date.isoformat() if pub_date else None
                 description = entry.get('summary', '') or entry.get('description', '')
 
                 # Изображение
@@ -181,7 +189,7 @@ def get_news_from_rss():
             return datetime.min
 
     all_articles.sort(key=get_date, reverse=True)
-    print(f"Всего собрано {len(all_articles)} статей из RSS.")
+    print(f"Всего собрано {len(all_articles)} статей за последний час.")
     return all_articles
 
 # --- Фильтрация по ключевым словам ---
@@ -245,7 +253,7 @@ async def scrape_article_details(page, url: str) -> tuple[str, str]:
         print(f"Ошибка при парсинге статьи {url}: {e}")
         return pub_time, summary
 
-# --- Отправка одной новости (без ИИ-анализа) ---
+# --- Отправка одной новости ---
 async def send_single_article(bot, article, pub_time: str, summary: str):
     title = article.get('title')
     url = article.get('url')
@@ -340,6 +348,7 @@ async def main():
             sent_titles_this_run = set()
 
             for article in new_articles:
+                # Отправляем все статьи, лимит MAX_ARTICLES_TO_SEND теперь большой (1000)
                 if sent_count >= MAX_ARTICLES_TO_SEND:
                     print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
                     break
@@ -358,8 +367,8 @@ async def main():
                     save_sent_title(title)
                     sent_titles_this_run.add(title)
                     sent_count += 1
-                    print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
-                    if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
+                    print(f"Успешно отправлено ({sent_count}/{len(new_articles)} всего).")
+                    if sent_count < len(new_articles):
                         await asyncio.sleep(SEND_INTERVAL_SECONDS)
                 else:
                     print(f"Не удалось отправить: {title}")
