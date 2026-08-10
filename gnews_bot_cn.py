@@ -16,7 +16,21 @@ from yandex_ai import summarize_article, extract_tags, analyze_sentiment
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-KEYWORDS = ["Бартер", "Бартерная торговля", "БРИКС", "Введение в РФ", "Китай", "Китайская экономика", "Ввезли в Россию", "Ввоз в Россию", "Ввоз оборудования", "Виза в РФ", "Внешняя торговля", "ВЭД", "ЕАЭС", "ЕЭК", "Завезли в Россию", "Запущено производство", "Из Китая", "Из-за рубежа", "Импорт", "Импорт в Китай", "Импорт из Китая", "Импорт из Южной Кореи", "Импорт из Японии", "Импортер", "Импортируемый", "Импортный", "Импортозамещение", "Иностранный", "Иностранный бизнес", "Контрафакт", "Логистика в РФ", "Локализация производства", "Маркировка в РФ", "Минпромторг", "Минэкономразвития", "МИД РФ", "Налогообложение импорта", "Обнуление пошлин", "Ограничение на въезд/выезд", "Открытие границ", "Параллельный импорт", "Поставка в Россию", "Пошлины на импорт", "Платежи в Китай", "Привлечение иностранных инвестиций", "Россельхознадзор", "Санкции", "Ставки перевозок", "Станкостроение", "Таможня", "Транзит через Россию", "Трансграничные платежи", "Трансграничный перевод", "Туризм", "ФТС РФ", "Цифровая валюта", "Цифровой финансовый актив (ЦФА)", "Экспорт в Россию", "Экспорт из Южной Кореи", "Экспорт из Японии", "Экспорт из Китая", "Крипта", "Крипто Валюта"]
+KEYWORDS = [
+    "Бартер", "Бартерная торговля", "БРИКС", "Введение в РФ", "Китай", "Китайская экономика",
+    "Ввезли в Россию", "Ввоз в Россию", "Ввоз оборудования", "Виза в РФ", "Внешняя торговля",
+    "ВЭД", "ЕАЭС", "ЕЭК", "Завезли в Россию", "Запущено производство", "Из Китая", "Из-за рубежа",
+    "Импорт", "Импорт в Китай", "Импорт из Китая", "Импорт из Южной Кореи", "Импорт из Японии",
+    "Импортер", "Импортируемый", "Импортный", "Импортозамещение", "Иностранный", "Иностранный бизнес",
+    "Контрафакт", "Логистика в РФ", "Локализация производства", "Маркировка в РФ", "Минпромторг",
+    "Минэкономразвития", "МИД РФ", "Налогообложение импорта", "Обнуление пошлин",
+    "Ограничение на въезд/выезд", "Открытие границ", "Параллельный импорт", "Поставка в Россию",
+    "Пошлины на импорт", "Платежи в Китай", "Привлечение иностранных инвестиций", "Россельхознадзор",
+    "Санкции", "Ставки перевозок", "Станкостроение", "Таможня", "Транзит через Россию",
+    "Трансграничные платежи", "Трансграничный перевод", "Туризм", "ФТС РФ", "Цифровая валюта",
+    "Цифровой финансовый актив (ЦФА)", "Экспорт в Россию", "Экспорт из Южной Кореи",
+    "Экспорт из Японии", "Экспорт из Китая", "Крипта", "Крипто Валюта"
+]
 if not KEYWORDS:
     print("Ключевые слова не заданы. Будут отправляться все новости.")
 
@@ -34,6 +48,10 @@ CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
+
+# --- Ограничение на количество AI-вызовов за один запуск ---
+MAX_AI_CALLS_PER_RUN = 5
+AI_CALLS_PER_RUN = 0
 
 # --- Список RSS-лент ---
 RSS_FEEDS = [
@@ -73,7 +91,7 @@ RSS_FEEDS = [
 ]
 MAX_ARTICLES_PER_FEED = 8
 
-# --- Форматирование времени (безопасное) ---
+# --- Форматирование времени ---
 def format_time(time_str: str) -> str:
     if not time_str:
         return "неизвестно"
@@ -112,42 +130,36 @@ def save_sent_title(article_title):
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
-    # Определяем границу времени: текущее время UTC минус 1 час
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    # Определяем границу времени: текущее время UTC минус 6 часов (увеличено для лучшего покрытия)
+    time_limit = datetime.now(timezone.utc) - timedelta(hours=6)
 
     for feed_url in RSS_FEEDS:
         try:
             feed = feedparser.parse(feed_url)
             print(f"Парсинг RSS: {feed_url}, найдено {len(feed.entries)} записей.")
-            for entry in feed.entries[:MAX_ARTICLES_PER_FEED * 2]:  # берём с запасом
+            for entry in feed.entries[:MAX_ARTICLES_PER_FEED * 2]:
                 if not entry.get('link') or not entry.get('title'):
                     continue
                 if entry.link in seen_urls:
                     continue
 
-                # --- Фильтр по времени (последний час) ---
+                # --- Фильтр по времени (последние 6 часов) ---
                 pub_date = None
                 if entry.get('published_parsed'):
-                    # published_parsed — это struct_time, преобразуем в datetime
                     pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
                 elif entry.get('published'):
-                    # Пытаемся распарсить строку, но это сложнее, поэтому лучше использовать published_parsed
-                    # Если нет published_parsed, пропускаем запись (или считаем её свежей?)
+                    # Если дата есть, но не распарсилась — пропускаем
                     pass
 
-                # Если дата не определена или она старше 1 часа — пропускаем
-                if pub_date is None or pub_date < one_hour_ago:
+                if pub_date is None or pub_date < time_limit:
                     continue
                 # --- Конец фильтра ---
 
                 seen_urls.add(entry.link)
-
-                # Дата публикации (ISO-формат для единообразия)
                 pub_date_iso = pub_date.isoformat() if pub_date else None
 
                 description = entry.get('summary', '') or entry.get('description', '')
 
-                # Изображение
                 image_url = None
                 if 'media_content' in entry and entry.media_content:
                     image_url = entry.media_content[0].get('url')
@@ -171,7 +183,6 @@ def get_news_from_rss():
         except Exception as e:
             print(f"Ошибка при парсинге RSS {feed_url}: {e}")
 
-    # Сортировка по дате (новые сверху)
     def get_date(article):
         try:
             return datetime.fromisoformat(article.get('publishedAt', ''))
@@ -179,7 +190,7 @@ def get_news_from_rss():
             return datetime.min
 
     all_articles.sort(key=get_date, reverse=True)
-    print(f"Всего собрано {len(all_articles)} статей из RSS за последний час.")
+    print(f"Всего собрано {len(all_articles)} статей из RSS за последние 6 часов.")
     return all_articles
 
 # --- Фильтрация по ключевым словам ---
@@ -245,6 +256,8 @@ async def scrape_article_details(page, url: str) -> tuple[str, str]:
 
 # --- Отправка одной новости с ИИ-анализом ---
 async def send_single_article(bot, article, pub_time: str, summary: str):
+    global AI_CALLS_PER_RUN
+
     title = article.get('title')
     url = article.get('url')
     image_url = article.get('image')
@@ -253,48 +266,38 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
         return False
 
     display_time = format_time(pub_time) if pub_time else format_time(article.get('publishedAt'))
-    
-    # Получаем полный текст для ИИ-анализа (если есть summary из парсинга, используем его)
     full_text = summary if summary else article.get('description', '')
 
-    # ---- 🔥 БЛОК ИИ-АНАЛИЗА (YandexGPT) ----
     ai_summary = None
     tags = []
     sentiment = None
 
-    # 1. Суммаризация (если нет своего summary, или он слишком короткий)
-    if (not summary or len(summary) < 100) and len(full_text) > 200:
-        try:
-            print(f"  ⏳ Запрос суммаризации в YandexGPT для: {title[:30]}...")
-            ai_summary = summarize_article(title, full_text)
-            if ai_summary:
-                print(f"  ✅ Суммаризация получена ({len(ai_summary)} символов)")
-            else:
-                print("  ⚠️ Не удалось получить суммаризацию")
-        except Exception as e:
-            print(f"  ❌ Ошибка суммаризации: {e}")
+    # 1. Суммаризация (если есть лимит AI-вызовов)
+    if AI_CALLS_PER_RUN < MAX_AI_CALLS_PER_RUN:
+        if (not summary or len(summary) < 100) and len(full_text) > 200:
+            try:
+                print(f"  ⏳ Запрос суммаризации в YandexGPT для: {title[:30]}...")
+                ai_summary = summarize_article(title, full_text)
+                if ai_summary:
+                    print(f"  ✅ Суммаризация получена ({len(ai_summary)} символов)")
+                    AI_CALLS_PER_RUN += 1
+                else:
+                    print("  ⚠️ Не удалось получить суммаризацию")
+            except Exception as e:
+                print(f"  ❌ Ошибка суммаризации: {e}")
 
-    # 2. Извлечение тегов (если есть полный текст)
-    if len(full_text) > 100:
+    # 2. Извлечение тегов (если есть лимит)
+    if AI_CALLS_PER_RUN < MAX_AI_CALLS_PER_RUN and len(full_text) > 100:
         try:
             print(f"  ⏳ Извлечение тегов через YandexGPT...")
             tags = extract_tags(title, full_text)
             if tags:
                 print(f"  ✅ Теги получены: {', '.join(tags)}")
+                AI_CALLS_PER_RUN += 1
         except Exception as e:
             print(f"  ❌ Ошибка извлечения тегов: {e}")
 
-    # 3. Анализ тональности (опционально, можно отключить для экономии токенов)
-    # if len(full_text) > 200:
-    #     try:
-    #         sentiment = analyze_sentiment(title, full_text)
-    #         print(f"  📊 Тональность: {sentiment.get('sentiment', 'unknown')}")
-    #     except Exception as e:
-    #         print(f"  ❌ Ошибка тональности: {e}")
-    # -----------------------------------------
-
-    # Формируем caption с учетом ИИ-данных
-    # Хештеги: если есть AI-теги — используем их, иначе из первых двух слов
+    # Формируем caption
     if tags:
         hashtags = " ".join([f"#{tag}" for tag in tags[:5]])
     else:
@@ -307,7 +310,6 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
         f"<b>{title}</b>\n",
     ]
 
-    # Добавляем AI-суммаризацию (приоритет у AI, так как она качественнее)
     if ai_summary:
         caption_parts.append(f"🤖 <b>Кратко:</b> {ai_summary}\n")
     elif summary:
@@ -315,7 +317,6 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
     else:
         caption_parts.append(f"Подробнее: <a href='{url}'>читать полностью</a>\n")
 
-    # Добавляем тональность (если есть)
     if sentiment and sentiment.get('sentiment'):
         sentiment_emoji = {"positive": "🟢", "negative": "🔴", "neutral": "⚪"}
         emoji = sentiment_emoji.get(sentiment['sentiment'], "⚪")
@@ -334,7 +335,6 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 
     caption = "\n".join(part for part in caption_parts if part.strip() or part == "")
 
-    # Обрезаем если длиннее 1024 символов
     if len(caption) > 1024:
         if "Подробнее" not in (ai_summary or summary or ""):
             oversize = len(caption) - 1024
@@ -366,7 +366,11 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
     print("Бот запущен (однократный запуск для serverless).")
-    
+
+    playwright_context = None
+    browser = None
+    page = None
+
     try:
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
         sent_urls = load_sent_urls()
@@ -389,16 +393,18 @@ async def main():
 
         print(f"Найдено {len(new_articles)} новых статей для отправки.")
 
-        browser = None
-        playwright_available = True
+        # Инициализация Playwright
         try:
             from playwright.async_api import async_playwright
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+            playwright_context = await async_playwright().start()
+            browser = await playwright_context.chromium.launch(headless=True)
+            page = await browser.new_page()
+            print("✅ Playwright инициализирован успешно.")
         except Exception as e:
-            print(f"Playwright недоступен или не удалось запустить браузер: {e}. Будем отправлять новости без парсинга.")
-            playwright_available = False
+            print(f"⚠️ Playwright недоступен или не удалось запустить браузер: {e}. Будем отправлять новости без парсинга.")
+            playwright_context = None
+            browser = None
+            page = None
 
         sent_count = 0
         sent_titles_this_run = set()
@@ -418,7 +424,7 @@ async def main():
 
             pub_time = ""
             summary = ""
-            if playwright_available and browser:
+            if page is not None:
                 try:
                     pub_time, summary = await scrape_article_details(page, article.get('url'))
                     print(f"  📄 Парсинг выполнен: время={pub_time or 'нет'}, summary={len(summary)} символов")
@@ -436,12 +442,16 @@ async def main():
             else:
                 print(f"❌ Не удалось отправить: {title}")
 
+    except Exception as e:
+        print(f"Критическая ошибка в main: {e}")
+    finally:
         if browser:
             await browser.close()
             print("Браузер закрыт.")
+        if playwright_context:
+            await playwright_context.stop()
+            print("Playwright остановлен.")
         print("--- Завершено ---")
-    except Exception as e:
-        print(f"Критическая ошибка в main: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
