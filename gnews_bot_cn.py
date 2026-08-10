@@ -132,7 +132,7 @@ RSS_FEEDS = [
     "https://www.stanok.info/rss/",                   # Станкостроение
     "https://www.roprom.ru/rss/",                     # Российская промышленность
 ]
-MAX_ARTICLES_PER_FEED = 25
+MAX_ARTICLES_PER_FEED = 10
 
 def format_time(time_str: str) -> str:
     if not time_str:
