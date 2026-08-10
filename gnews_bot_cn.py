@@ -70,7 +70,7 @@ RSS_FEEDS = [
     "https://www.scmp.com/rss/",
     "https://tvbrics.com/feed/"
 ]
-MAX_ARTICLES_PER_FEED = 5
+MAX_ARTICLES_PER_FEED = 8
 
 # --- Форматирование времени (безопасное) ---
 def format_time(time_str: str) -> str:
