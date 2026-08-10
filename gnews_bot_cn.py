@@ -37,8 +37,8 @@ if not KEYWORDS:
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
     sys.exit(1)
-    
-    # --- Построение эталонного вектора для семантического поиска ---
+
+# --- Построение эталонного вектора для семантического поиска ---
 topic_vector = None
 if KEYWORDS:
     try:
@@ -55,7 +55,7 @@ else:
     print("⚠️ Ключевые слова не заданы. Семантический поиск отключён.")
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 1000          # Большое число, чтобы отправлять все найденные
+MAX_ARTICLES_TO_SEND = 1000
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -65,7 +65,6 @@ CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 
-# --- Список RSS-лент ---
 RSS_FEEDS = [
     "https://ria.ru/export/rss2/index.xml",
     "https://tass.ru/rss/v2.xml",
@@ -103,7 +102,6 @@ RSS_FEEDS = [
 ]
 MAX_ARTICLES_PER_FEED = 5
 
-# --- Форматирование времени ---
 def format_time(time_str: str) -> str:
     if not time_str:
         return "неизвестно"
@@ -117,7 +115,6 @@ def format_time(time_str: str) -> str:
     except (ValueError, TypeError):
         return time_str
 
-# --- Работа с уже отправленными ---
 def load_sent_urls():
     if not os.path.exists(SENT_ARTICLES_FILE):
         return set()
@@ -138,13 +135,11 @@ def save_sent_title(article_title):
     with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
         f.write(article_title + '\n')
 
-# --- Получение новостей из RSS с фильтром за последний час ---
+# --- Получение новостей из RSS (фильтр за последний час) ---
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
-
-    # Определяем границу: 1 час назад
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)  # для теста можно увеличить до 6
 
     for feed_url in RSS_FEEDS:
         try:
@@ -156,25 +151,19 @@ def get_news_from_rss():
                 if entry.link in seen_urls:
                     continue
 
-                # --- Фильтр по времени (последний час) ---
                 pub_date = None
                 if entry.get('published_parsed'):
                     pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
                 elif entry.get('published'):
-                    # Если дата есть, но не распарсилась — пропускаем
                     pass
 
-                # Если дата отсутствует или старше 1 часа — пропускаем
                 if pub_date is None or pub_date < one_hour_ago:
                     continue
-                # --- Конец фильтра ---
 
                 seen_urls.add(entry.link)
-
                 pub_date_iso = pub_date.isoformat() if pub_date else None
                 description = entry.get('summary', '') or entry.get('description', '')
 
-                # Изображение
                 image_url = None
                 if 'media_content' in entry and entry.media_content:
                     image_url = entry.media_content[0].get('url')
@@ -198,7 +187,6 @@ def get_news_from_rss():
         except Exception as e:
             print(f"Ошибка при парсинге RSS {feed_url}: {e}")
 
-    # Сортировка по дате (новые сверху)
     def get_date(article):
         try:
             return datetime.fromisoformat(article.get('publishedAt', ''))
@@ -209,46 +197,38 @@ def get_news_from_rss():
     print(f"Всего собрано {len(all_articles)} статей за последний час.")
     return all_articles
 
-# --- Фильтрация по ключевым словам ---
+# --- Гибридная фильтрация ---
 def filter_articles_hybrid(articles):
-    """
-    Гибридная фильтрация:
-    1. Сначала проверяет по ключевым словам (быстро).
-    2. Если не прошло по ключевым словам — проверяет семантически (если доступно).
-    """
     if not KEYWORDS:
-        logger.info("Ключевые слова не заданы. Возвращаем все статьи.")
+        print("Ключевые слова не заданы. Возвращаем все статьи.")
         return articles
-    
+
     filtered = []
-    # Счётчики для статистики
     kw_matches = 0
     semantic_matches = 0
-    
+
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
         full_text = title + " " + description
         content_lower = full_text.lower()
-        
-        # 1. Проверка по ключевым словам
+
+        # 1. Ключевые слова
         kw_match = any(kw.lower() in content_lower for kw in KEYWORDS)
         if kw_match:
             filtered.append(article)
             kw_matches += 1
             continue
-        
-        # 2. Если ключевые слова не совпали — семантическая проверка
+
+        # 2. Семантика
         if topic_vector is not None and len(full_text) > 20:
             try:
-                # Используем кэширующую версию для экономии ресурсов
                 if is_semantically_relevant_cached(full_text, topic_vector, threshold=0.7):
                     filtered.append(article)
                     semantic_matches += 1
             except Exception as e:
                 print(f"  ⚠️ Ошибка семантической проверки: {e}")
-                # В случае ошибки не добавляем статью (можно добавить, если хотите быть более либеральным)
-    
+
     print(f"После гибридной фильтрации осталось {len(filtered)} из {len(articles)} статей.")
     print(f"  - По ключевым словам: {kw_matches}")
     print(f"  - По семантике: {semantic_matches}")
@@ -312,7 +292,6 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 
     display_time = format_time(pub_time) if pub_time else format_time(article.get('publishedAt'))
 
-    # Хештеги из первых двух слов
     clean_title = re.sub(r'[^\w\s]', '', title)
     words = clean_title.split()[:2]
     hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
@@ -363,7 +342,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
-    # ---- Уведомление о запуске (с отладкой) ----
+    # Уведомление о запуске
     try:
         print("🔍 Отправка уведомления о запуске...")
         start_message = "🔍 Начинаю поиск свежих новостей..."
@@ -371,7 +350,6 @@ async def main():
         print("✅ Уведомление о запуске отправлено.")
     except Exception as e:
         print(f"❌ Ошибка при отправке уведомления: {e}")
-        # Продолжаем выполнение, даже если уведомление не отправилось
 
     print("Бот запущен (однократный запуск для serverless).")
 
@@ -386,12 +364,10 @@ async def main():
             sent_urls = load_sent_urls()
             sent_titles = load_sent_titles()
 
-            # ---- Получение новостей ----
             print("📡 Получаем новости из RSS...")
             all_news = get_news_from_rss()
             print(f"📊 Получено {len(all_news)} статей из RSS")
 
-            # ---- Фильтрация ----
             print("🔍 Фильтруем новости...")
             filtered_news = filter_articles_hybrid(all_news)
             print(f"📊 После фильтрации: {len(filtered_news)} статей")
@@ -405,7 +381,6 @@ async def main():
                     print(f"❌ Ошибка при отправке уведомления: {e}")
                 return
 
-            # ---- Проверка на дубли ----
             new_articles = [
                 article for article in filtered_news
                 if article.get('url') not in sent_urls and article.get('title') not in sent_titles
@@ -422,13 +397,34 @@ async def main():
 
             print(f"✅ Найдено {len(new_articles)} новых статей для отправки.")
 
-            # ---- Отправка ----
             sent_count = 0
             sent_titles_this_run = set()
 
+            # ---- ВОТ ЗДЕСЬ БЫЛ ПУСТОЙ ЦИКЛ ----
             for article in new_articles:
-                # ... (цикл отправки, как раньше)
-                pass
+                if sent_count >= MAX_ARTICLES_TO_SEND:
+                    print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
+                    break
+
+                title = article.get('title')
+                if title in sent_titles_this_run:
+                    print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
+                    save_sent_url(article.get('url'))
+                    continue
+
+                print(f"Обработка: {title}")
+                pub_time, summary = await scrape_article_details(page, article.get('url'))
+
+                if await send_single_article(bot, article, pub_time, summary):
+                    save_sent_url(article.get('url'))
+                    save_sent_title(title)
+                    sent_titles_this_run.add(title)
+                    sent_count += 1
+                    print(f"Успешно отправлено ({sent_count}/{len(new_articles)} всего).")
+                    if sent_count < len(new_articles):
+                        await asyncio.sleep(SEND_INTERVAL_SECONDS)
+                else:
+                    print(f"Не удалось отправить: {title}")
 
             # ---- Уведомление о завершении ----
             try:
@@ -441,7 +437,7 @@ async def main():
     except Exception as e:
         print(f"❌ Критическая ошибка в main: {e}")
         import traceback
-        traceback.print_exc()  # Подробная трассировка ошибки
+        traceback.print_exc()
         try:
             error_message = f"❌ Ошибка при выполнении поиска: {str(e)[:100]}"
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=error_message)
@@ -452,3 +448,7 @@ async def main():
             await browser.close()
             print("Браузер закрыт.")
         print("--- Завершено ---")
+
+if __name__ == '__main__':
+    asyncio.run(main())
+    sys.exit(0)
