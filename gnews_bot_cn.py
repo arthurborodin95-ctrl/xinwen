@@ -38,7 +38,7 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     sys.exit(1)
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 3
+MAX_ARTICLES_TO_SEND = 50
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -84,7 +84,7 @@ RSS_FEEDS = [
     "https://www.scmp.com/rss/",
     "https://tvbrics.com/feed/"
 ]
-MAX_ARTICLES_PER_FEED = 5
+MAX_ARTICLES_PER_FEED = 20
 
 # --- Форматирование времени ---
 def format_time(time_str: str) -> str:
