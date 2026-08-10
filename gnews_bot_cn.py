@@ -362,6 +362,14 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
 # --- Основная функция ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+    
+        # ---- НОВЫЙ БЛОК: Уведомление о запуске ----
+    try:
+        start_message = "🔍 Начинаю поиск свежих новостей..."
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=start_message)
+        print("✅ Уведомление о запуске отправлено в Telegram.")
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить уведомление о запуске: {e}")
     print("Бот запущен (однократный запуск для serverless).")
 
     browser = None
@@ -432,3 +440,9 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
     sys.exit(0)
+# В конце работы (после отправки всех новостей)
+try:
+    summary_message = f"✅ Поиск завершён. Найдено и отправлено {sent_count} новостей."
+    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=summary_message)
+except:
+    pass
