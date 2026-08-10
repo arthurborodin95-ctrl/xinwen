@@ -65,42 +65,74 @@ CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 
+# --- Список RSS-лент (обновлённый) ---
 RSS_FEEDS = [
-    "https://ria.ru/export/rss2/index.xml",
-    "https://tass.ru/rss/v2.xml",
-    "https://www.interfax.ru/rss.asp",
-    "https://www.finmarket.ru/export/rss.asp",
-    "https://www.kommersant.ru/RSS/news.xml",
-    "https://www.vedomosti.ru/rss",
-    "https://1prime.ru/export/rss.xml",
-    "https://www.forbes.ru/rss/all",
-    "https://iz.ru/xml/rss/all.xml",
-    "https://www.tks.ru/law.rss",
-    "https://www.tks.ru/nearby.rss",
-    "https://trans.ru/rss/news",
-    "https://www.infranews.ru/feed/",
-    "https://www.tourdom.ru/rss/",
-    "https://www.autostat.ru/export/rss/",
-    "https://morvesti.ru/rss/",
-    "https://portnews.ru/rss/",
-    "https://seanews.ru/feed/",
-    "https://primpress.ru/rss/",
-    "https://www.ixbt.com/export/news.rss",
-    "https://www.cnews.ru/news/rss",
-    "https://www.comnews.ru/rss",
-    "http://www.cbr.ru/rss/RssNews",
-    "http://www.cbr.ru/rss/RssPress",
-    "https://biang.ru/rss/",
-    "http://russian.news.cn/rss/news.xml",
-    "https://www.eastrussia.ru/feed/",
-    "https://bigasia.ru/feed/",
-    "http://russian.china.org.cn/rss/feed.xml",
-    "http://russian.people.com.cn/rss/feed.xml",
-    "https://rsshub.app/cnbc/rss/",
-    "https://www.scmp.com/rss/",
-    "https://tvbrics.com/feed/"
+    # ===== УЖЕ БЫЛИ В КОДЕ (33 источника) =====
+    "https://ria.ru/export/rss2/index.xml",           # РИА Новости
+    "https://tass.ru/rss/v2.xml",                     # ТАСС
+    "https://www.interfax.ru/rss.asp",                # Интерфакс
+    "https://www.finmarket.ru/export/rss.asp",        # Финмаркет
+    "https://www.kommersant.ru/RSS/news.xml",         # Коммерсантъ
+    "https://www.vedomosti.ru/rss",                   # Ведомости
+    "https://1prime.ru/export/rss.xml",               # Прайм
+    "https://www.forbes.ru/rss/all",                  # Forbes Russia
+    "https://iz.ru/xml/rss/all.xml",                  # Известия
+    "https://www.tks.ru/law.rss",                     # TKS.ru (законодательство)
+    "https://www.tks.ru/nearby.rss",                  # TKS.ru (смежные темы)
+    "https://trans.ru/rss/news",                      # Trans.ru
+    "https://www.infranews.ru/feed/",                 # Infranews
+    "https://www.tourdom.ru/rss/",                    # Tourdom
+    "https://www.autostat.ru/export/rss/",            # Автостат
+    "https://morvesti.ru/rss/",                       # Морские вести
+    "https://portnews.ru/rss/",                       # Portnews
+    "https://seanews.ru/feed/",                       # Seanews
+    "https://primpress.ru/rss/",                      # Primpress
+    "https://www.ixbt.com/export/news.rss",           # IXBT
+    "https://www.cnews.ru/news/rss",                  # CNews
+    "https://www.comnews.ru/rss",                     # ComNews
+    "http://www.cbr.ru/rss/RssNews",                  # ЦБ РФ (новости)
+    "http://www.cbr.ru/rss/RssPress",                 # ЦБ РФ (пресс-релизы)
+    "https://biang.ru/rss/",                          # Biang.ru
+    "http://russian.news.cn/rss/news.xml",            # Синьхуа (русская версия)
+    "https://www.eastrussia.ru/feed/",                # EastRussia
+    "https://bigasia.ru/feed/",                       # BigAsia
+    "http://russian.china.org.cn/rss/feed.xml",       # Китайский инфоцентр
+    "http://russian.people.com.cn/rss/feed.xml",      # People's Daily
+    "https://rsshub.app/cnbc/rss/",                   # RSSHub (CNBC)
+    "https://www.scmp.com/rss/",                      # South China Morning Post
+    "https://tvbrics.com/feed/",                      # TV BRICS
+
+    # ===== НОВЫЕ ИСТОЧНИКИ (рекомендуемые) =====
+    # --- Деловые и экономические ---
+    "https://www.rbc.ru/rss/",                        # РБК
+    "https://lenta.ru/rss",                           # Lenta.ru
+    "https://www.gazeta.ru/export/rss/first.xml",     # Газета.ru
+    "https://expert.ru/rss/",                         # Эксперт
+    "https://www.fin-gazeta.ru/rss/",                 # Финансовая газета
+    "https://www.vestifinance.ru/rss",                # Вести Финанс
+
+    # --- Официальные государственные ---
+    "https://www.economy.gov.ru/rss",                 # Минэкономразвития РФ
+    "https://minpromtorg.gov.ru/rss/",                # Минпромторг РФ
+    "http://www.customs.ru/rss/",                     # ФТС РФ
+    "https://rg.ru/rss/",                             # Российская газета
+    "https://www.pnp.ru/rss/",                        # Парламентская газета
+
+    # --- Международные и внешнеэкономические ---
+    "https://www.ved.gov.ru/rss/",                    # Журнал "Внешняя торговля"
+    "https://russian.china.org.cn/rss/business.xml",  # Китайский бизнес (деловая лента)
+    "https://infobrics.org/rss/",                     # BRICS Business
+    "https://eec.eaeunion.org/rss/",                  # Евразийская экономическая комиссия
+
+    # --- Логистика и транспорт ---
+    "https://www.logistics.ru/rss",                   # Логистика
+    "https://www.rzd-partner.ru/rss/",                # РЖД-Партнёр
+
+    # --- Промышленность ---
+    "https://www.stanok.info/rss/",                   # Станкостроение
+    "https://www.roprom.ru/rss/",                     # Российская промышленность
 ]
-MAX_ARTICLES_PER_FEED = 5
+MAX_ARTICLES_PER_FEED = 25
 
 def format_time(time_str: str) -> str:
     if not time_str:
