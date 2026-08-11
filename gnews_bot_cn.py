@@ -96,12 +96,7 @@ RSS_FEEDS = [
     "https://www.pnp.ru/rss/",
     "https://www.ved.gov.ru/rss/",
     "https://russian.china.org.cn/rss/business.xml",
-    "https://infobrics.org/rss/",
-    "https://eec.eaeunion.org/rss/",
-    "https://www.logistics.ru/rss",
-    "https://www.rzd-partner.ru/rss/",
-    "https://www.stanok.info/rss/",
-    "https://www.roprom.ru/rss/",
+    "https://www.logistics.ru/rss"
 ]
 
 # --- Функции работы с файлами (вместо SQLite) ---
