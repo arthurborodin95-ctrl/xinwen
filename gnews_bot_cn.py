@@ -9,6 +9,9 @@ from telegram.constants import ParseMode
 from datetime import datetime, timezone, timedelta
 import feedparser
 
+# Импорт семантического фильтра
+from semantic_filter import build_topic_embedding, is_semantically_relevant_cached
+
 # --- Загрузка переменных окружения ---
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -37,9 +40,25 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
     sys.exit(1)
 
+# --- Построение эталонного вектора для семантического поиска ---
+print("🔍 Загрузка модели для семантического поиска...")
+topic_vector = None
+if KEYWORDS:
+    try:
+        topic_vector = build_topic_embedding(KEYWORDS)
+        if topic_vector is not None:
+            print("✅ Эталонный вектор успешно построен.")
+        else:
+            print("⚠️ Не удалось построить эталонный вектор. Семантический поиск будет отключён.")
+    except Exception as e:
+        print(f"❌ Ошибка при построении эталонного вектора: {e}")
+        topic_vector = None
+else:
+    print("⚠️ Ключевые слова не заданы. Семантический поиск отключён.")
+
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 15          # Уменьшено для скорости
-MAX_ARTICLES_PER_FEED = 5           # Уменьшено
+MAX_ARTICLES_TO_SEND = 15
+MAX_ARTICLES_PER_FEED = 5
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -48,8 +67,9 @@ CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
+SEMANTIC_THRESHOLD = 0.7  # Порог схожести (можно менять)
 
-# --- Список RSS-лент (сокращён до 30 проверенных источников) ---
+# --- Список RSS-лент (можно сократить) ---
 RSS_FEEDS = [
     "https://ria.ru/export/rss2/index.xml",
     "https://tass.ru/rss/v2.xml",
@@ -58,7 +78,6 @@ RSS_FEEDS = [
     "https://www.kommersant.ru/RSS/news.xml",
     "https://www.vedomosti.ru/rss",
     "https://1prime.ru/export/rss.xml",
-    "https://www.forbes.ru/rss/all",
     "https://iz.ru/xml/rss/all.xml",
     "https://www.tks.ru/law.rss",
     "https://www.tks.ru/nearby.rss",
@@ -83,10 +102,29 @@ RSS_FEEDS = [
     "http://russian.people.com.cn/rss/feed.xml",
     "https://rsshub.app/cnbc/rss/",
     "https://www.scmp.com/rss/",
-    "https://tvbrics.com/feed/"
+    "https://tvbrics.com/feed/",
+    "https://www.rbc.ru/rss/",
+    "https://lenta.ru/rss",
+    "https://www.gazeta.ru/export/rss/first.xml",
+    "https://expert.ru/rss/",
+    "https://www.fin-gazeta.ru/rss/",
+    "https://www.vestifinance.ru/rss",
+    "https://www.economy.gov.ru/rss",
+    "https://minpromtorg.gov.ru/rss/",
+    "http://www.customs.ru/rss/",
+    "https://rg.ru/rss/",
+    "https://www.pnp.ru/rss/",
+    "https://www.ved.gov.ru/rss/",
+    "https://russian.china.org.cn/rss/business.xml",
+    "https://infobrics.org/rss/",
+    "https://eec.eaeunion.org/rss/",
+    "https://www.logistics.ru/rss",
+    "https://www.rzd-partner.ru/rss/",
+    "https://www.stanok.info/rss/",
+    "https://www.roprom.ru/rss/",
 ]
 
-# --- Функции работы с файлами (вместо SQLite) ---
+# --- Функции работы с файлами ---
 def load_sent_urls():
     if not os.path.exists(SENT_ARTICLES_FILE):
         return set()
@@ -120,11 +158,11 @@ def format_time(time_str: str) -> str:
     except (ValueError, TypeError):
         return time_str
 
-# --- Получение новостей из RSS (фильтр за последний час) ---
+# --- Получение новостей из RSS ---
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)  # можно увеличить до 6 для теста
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for feed_url in RSS_FEEDS:
         try:
@@ -142,7 +180,6 @@ def get_news_from_rss():
                 elif entry.get('published'):
                     pass
 
-                # Фильтр по времени (можно закомментировать для теста)
                 if pub_date is None or pub_date < one_hour_ago:
                     continue
 
@@ -183,21 +220,43 @@ def get_news_from_rss():
     print(f"Всего собрано {len(all_articles)} статей за последний час.")
     return all_articles
 
-# --- Фильтрация по ключевым словам (без семантики) ---
-def filter_articles_by_keywords(articles):
+# --- Гибридная фильтрация (ключевые слова + семантика) ---
+def filter_articles_hybrid(articles):
     if not KEYWORDS:
         return articles
+
     filtered = []
+    kw_matches = 0
+    semantic_matches = 0
+
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
-        content = (title + " " + description).lower()
-        if any(kw.lower() in content for kw in KEYWORDS):
+        full_text = title + " " + description
+        content_lower = full_text.lower()
+
+        # 1. Проверка по ключевым словам (быстро)
+        kw_match = any(kw.lower() in content_lower for kw in KEYWORDS)
+        if kw_match:
             filtered.append(article)
-    print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
+            kw_matches += 1
+            continue
+
+        # 2. Если ключевые слова не совпали — семантическая проверка (медленнее)
+        if topic_vector is not None and len(full_text) > 20:
+            try:
+                if is_semantically_relevant_cached(full_text, topic_vector, threshold=SEMANTIC_THRESHOLD):
+                    filtered.append(article)
+                    semantic_matches += 1
+            except Exception as e:
+                print(f"  ⚠️ Ошибка семантической проверки: {e}")
+
+    print(f"После гибридной фильтрации осталось {len(filtered)} из {len(articles)} статей.")
+    print(f"  - По ключевым словам: {kw_matches}")
+    print(f"  - По семантике: {semantic_matches}")
     return filtered
 
-# --- Отправка одной новости (без Playwright) ---
+# --- Отправка одной новости ---
 async def send_single_article(bot, article):
     title = article.get('title')
     url = article.get('url')
@@ -272,7 +331,6 @@ async def main():
     try:
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
 
-        # Загружаем уже отправленные из файлов
         sent_urls = load_sent_urls()
         sent_titles = load_sent_titles()
 
@@ -280,8 +338,8 @@ async def main():
         all_news = get_news_from_rss()
         print(f"📊 Получено {len(all_news)} статей из RSS")
 
-        print("🔍 Фильтруем новости по ключевым словам...")
-        filtered_news = filter_articles_by_keywords(all_news)
+        print("🔍 Фильтруем новости (ключевые слова + семантика)...")
+        filtered_news = filter_articles_hybrid(all_news)
         print(f"📊 После фильтрации: {len(filtered_news)} статей")
 
         if not filtered_news:
@@ -292,7 +350,7 @@ async def main():
                 print(f"❌ Ошибка при отправке уведомления: {e}")
             return
 
-        # Проверка дублей через файлы
+        # Проверка дублей
         new_articles = []
         for article in filtered_news:
             url = article.get('url')
@@ -322,7 +380,6 @@ async def main():
             print(f"Обработка: {title}")
 
             if await send_single_article(bot, article):
-                # Сохраняем в файлы
                 save_sent_url(article.get('url'))
                 save_sent_title(title)
                 sent_count += 1
