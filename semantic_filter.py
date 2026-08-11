@@ -1,26 +1,22 @@
 """
 Модуль для семантической фильтрации новостей с использованием локальной модели sentence-transformers.
-Использует модель paraphrase-multilingual-MiniLM-L12-v2, оптимизированную для русского языка.
+Модель: paraphrase-multilingual-MiniLM-L12-v2 (оптимизирована для русского языка).
 """
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import os
 import logging
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
 # --- Конфигурация ---
-# Модель для русского языка (оптимальный баланс скорость/качество)
 MODEL_NAME = 'paraphrase-multilingual-MiniLM-L12-v2'
-# Порог схожести (0.0 - 1.0). Чем выше, тем строже фильтр.
 DEFAULT_THRESHOLD = 0.7
-# Максимальная длина текста для векторизации (символов)
 MAX_TEXT_LENGTH = 500
 
-# --- Инициализация модели (однократная, при первом импорте) ---
+# --- Глобальные переменные (загружаются один раз) ---
 _model = None
 _topic_vector = None
 
@@ -29,30 +25,20 @@ def _get_model():
     global _model
     if _model is None:
         try:
-            logger.info(f"Загрузка модели {MODEL_NAME}...")
+            print(f"🔄 Загрузка модели {MODEL_NAME}...")
             _model = SentenceTransformer(MODEL_NAME)
-            logger.info("Модель успешно загружена.")
+            print("✅ Модель успешно загружена.")
         except Exception as e:
-            logger.error(f"Ошибка загрузки модели: {e}")
-            raise RuntimeError(f"Не удалось загрузить модель: {e}")
+            print(f"❌ Ошибка загрузки модели: {e}")
+            raise
     return _model
 
 def embed_text(text: str) -> np.ndarray:
-    """
-    Преобразует текст в вектор (embedding).
-    
-    Args:
-        text: Текст для векторизации (обрезается до MAX_TEXT_LENGTH символов).
-    
-    Returns:
-        numpy.ndarray: Векторное представление текста.
-    """
+    """Преобразует текст в вектор (embedding)."""
     model = _get_model()
-    # Обрезаем текст для скорости и экономии памяти
     truncated = text[:MAX_TEXT_LENGTH].strip()
     if not truncated:
         truncated = "пустой текст"
-    # Векторизуем (model.encode возвращает numpy массив)
     vector = model.encode(truncated, convert_to_numpy=True)
     return vector
 
@@ -60,86 +46,75 @@ def build_topic_embedding(keywords: list) -> np.ndarray:
     """
     Строит эталонный вектор темы на основе списка ключевых слов.
     Используется усреднение векторов всех ключевых слов.
-    
-    Args:
-        keywords: Список ключевых слов (строк).
-    
-    Returns:
-        numpy.ndarray: Усреднённый вектор темы, или None, если список пуст.
     """
+    global _topic_vector
     if not keywords:
-        logger.warning("Список ключевых слов пуст. Вектор темы не создан.")
+        print("⚠️ Список ключевых слов пуст. Вектор темы не создан.")
         return None
     
-    logger.info(f"Построение эталонного вектора по {len(keywords)} ключевым словам...")
+    print(f"📊 Построение эталонного вектора по {len(keywords)} ключевым словам...")
     vectors = []
     for kw in keywords:
         try:
             vec = embed_text(kw)
             vectors.append(vec)
         except Exception as e:
-            logger.warning(f"Не удалось векторизовать ключевое слово '{kw}': {e}")
+            print(f"  ⚠️ Не удалось векторизовать '{kw}': {e}")
             continue
     
     if not vectors:
-        logger.error("Не удалось векторизовать ни одно ключевое слово.")
+        print("❌ Не удалось векторизовать ни одно ключевое слово.")
         return None
     
-    # Усредняем все векторы
-    topic_vector = np.mean(vectors, axis=0)
-    logger.info(f"Эталонный вектор создан (размерность: {len(topic_vector)})")
-    return topic_vector
+    _topic_vector = np.mean(vectors, axis=0)
+    print(f"✅ Эталонный вектор создан (размерность: {len(_topic_vector)})")
+    return _topic_vector
 
-def is_semantically_relevant(text: str, topic_vector: np.ndarray, threshold: float = DEFAULT_THRESHOLD) -> bool:
+def is_semantically_relevant(text: str, topic_vector: np.ndarray = None, threshold: float = DEFAULT_THRESHOLD) -> bool:
     """
     Проверяет, является ли текст семантически релевантным теме.
     Вычисляет косинусное сходство между вектором текста и эталонным вектором.
-    
-    Args:
-        text: Текст для проверки.
-        topic_vector: Эталонный вектор темы (из build_topic_embedding).
-        threshold: Порог схожести (0.0 - 1.0). Рекомендуется 0.6-0.8.
-    
-    Returns:
-        bool: True, если текст релевантен, иначе False.
     """
     if topic_vector is None:
-        logger.warning("Эталонный вектор не задан. Пропускаем семантическую проверку.")
-        return True  # Если нет эталона, считаем все релевантными
+        global _topic_vector
+        topic_vector = _topic_vector
+    
+    if topic_vector is None:
+        print("⚠️ Эталонный вектор не задан. Пропускаем семантическую проверку.")
+        return True
     
     if not text or len(text.strip()) < 10:
-        return False  # Слишком короткий текст не может быть релевантным
+        return False
     
     try:
-        # Получаем вектор текста
         text_vector = embed_text(text)
-        # Вычисляем косинусное сходство
         similarity = cosine_similarity([text_vector], [topic_vector])[0][0]
-        # Логируем для отладки (можно закомментировать)
-        # logger.debug(f"Сходство: {similarity:.4f} (порог: {threshold})")
-        return similarity >= threshold
+        result = similarity >= threshold
+        if result:
+            print(f"  ✅ Семантическое совпадение: {similarity:.3f} (порог: {threshold})")
+        return result
     except Exception as e:
-        logger.error(f"Ошибка при вычислении семантической релевантности: {e}")
-        return False  # В случае ошибки считаем нерелевантным
+        print(f"  ❌ Ошибка семантической проверки: {e}")
+        return False
 
-# --- Функция для управления кэшированием (опционально) ---
+# --- Кэширование результатов ---
 _cache = {}
 
-def is_semantically_relevant_cached(text: str, topic_vector: np.ndarray, threshold: float = DEFAULT_THRESHOLD) -> bool:
-    """
-    Кэширующая версия is_semantically_relevant.
-    Использует хеш текста для кэширования результата.
-    """
-    cache_key = hash(text[:200])  # Используем первые 200 символов для кэша
+def is_semantically_relevant_cached(text: str, topic_vector: np.ndarray = None, threshold: float = DEFAULT_THRESHOLD) -> bool:
+    """Кэширующая версия is_semantically_relevant."""
+    if not text or len(text.strip()) < 10:
+        return False
+    
+    cache_key = hash(text[:200])
     if cache_key in _cache:
         return _cache[cache_key]
     
     result = is_semantically_relevant(text, topic_vector, threshold)
     _cache[cache_key] = result
-    # Ограничиваем размер кэша, чтобы не переполнить память
-    if len(_cache) > 1000:
-        # Удаляем половину записей
-        keys = list(_cache.keys())[:500]
+    
+    # Ограничиваем размер кэша
+    if len(_cache) > 500:
+        keys = list(_cache.keys())[:250]
         for k in keys:
             del _cache[k]
     return result
