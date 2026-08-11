@@ -11,6 +11,9 @@ from telegram.error import BadRequest
 from datetime import datetime, timezone, timedelta
 import feedparser
 
+# --- ИМПОРТ ИИ-АНАЛИЗАТОРА ---
+from ai_analyzer import analyze_news, generate_report
+
 # --- Загрузка переменных окружения ---
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -303,7 +306,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- Основная функция (с уведомлениями) ---
+# --- Основная функция (с уведомлениями и ИИ-анализом) ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
     print("Бот запущен (однократный запуск для serverless).")
@@ -334,7 +337,6 @@ async def main():
 
             if not filtered_news:
                 print("Нет новостей после фильтрации.")
-                # Уведомление, что новостей нет
                 try:
                     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
                 except Exception as e:
@@ -357,6 +359,7 @@ async def main():
 
             sent_count = 0
             sent_titles_this_run = set()
+            sent_articles = []  # для сбора отправленных статей (для итогового отчёта)
 
             for article in new_articles:
                 if sent_count >= MAX_ARTICLES_TO_SEND:
@@ -377,11 +380,55 @@ async def main():
                     save_sent_title(title)
                     sent_titles_this_run.add(title)
                     sent_count += 1
+                    sent_articles.append(article)  # сохраняем для отчёта
                     print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
+
+                    # --- ИИ-Анализ для первых 3 новостей за запуск ---
+                    if len(sent_articles) <= 3:
+                        try:
+                            analysis = await analyze_news(
+                                article['title'],
+                                article.get('description', '') or summary
+                            )
+                            if analysis:
+                                await bot.send_message(
+                                    chat_id=TELEGRAM_CHAT_ID,
+                                    text=f"🧠 Анализ новости:\n{analysis}",
+                                    parse_mode=ParseMode.HTML
+                                )
+                                print(f"✅ ИИ-анализ отправлен для: {title[:30]}...")
+                        except Exception as e:
+                            print(f"❌ Ошибка ИИ-анализа: {e}")
+
                     if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
                         await asyncio.sleep(SEND_INTERVAL_SECONDS)
                 else:
                     print(f"Не удалось отправить: {title}")
+
+            # ============================================================
+            # 📊 ИТОГОВЫЙ ОТЧЁТ (с ИИ-аналитикой)
+            # ============================================================
+            if sent_articles:
+                try:
+                    # Собираем данные для отчёта
+                    skipped = [a['title'] for a in filtered_news if a not in sent_articles]
+                    report = await generate_report(
+                        total_found=len(all_news),
+                        total_filtered=len(filtered_news),
+                        total_sent=len(sent_articles),
+                        sources_checked=RSS_FEEDS,
+                        skipped_titles=skipped[:5],
+                        errors=[]
+                    )
+                    if report:
+                        await bot.send_message(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            text=f"📊 Итоговый отчёт:\n{report}",
+                            parse_mode=ParseMode.HTML
+                        )
+                        print("✅ Итоговый отчёт отправлен.")
+                except Exception as e:
+                    print(f"❌ Ошибка при генерации итогового отчёта: {e}")
 
             # ============================================================
             # 📊 УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ (с краткой статистикой)
@@ -405,7 +452,6 @@ async def main():
 
     except Exception as e:
         print(f"Критическая ошибка в main: {e}")
-        # Уведомление об ошибке
         try:
             error_message = f"❌ Произошла ошибка при выполнении поиска: {str(e)[:100]}"
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=error_message)
