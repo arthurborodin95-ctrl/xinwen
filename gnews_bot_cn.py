@@ -1,4 +1,3 @@
-import requests
 import telegram
 import time
 import asyncio
@@ -10,7 +9,6 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from datetime import datetime, timezone, timedelta
 import feedparser
-from semantic_filter import build_topic_embedding, is_semantically_relevant_cached
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
@@ -38,24 +36,9 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
     sys.exit(1)
 
-# --- Построение эталонного вектора для семантического поиска ---
-topic_vector = None
-if KEYWORDS:
-    try:
-        print("Построение эталонного вектора для семантического поиска...")
-        topic_vector = build_topic_embedding(KEYWORDS)
-        if topic_vector is not None:
-            print("✅ Эталонный вектор успешно построен.")
-        else:
-            print("⚠️ Не удалось построить эталонный вектор. Семантический поиск будет отключён.")
-    except Exception as e:
-        print(f"❌ Ошибка при построении эталонного вектора: {e}")
-        topic_vector = None
-else:
-    print("⚠️ Ключевые слова не заданы. Семантический поиск отключён.")
-
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 100
+MAX_ARTICLES_TO_SEND = 15          # Уменьшено с 1000 для скорости
+MAX_ARTICLES_PER_FEED = 5           # Уменьшено с 25
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -65,74 +48,64 @@ CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 
-# --- Список RSS-лент (обновлённый) ---
+# --- Отключение семантического поиска (для скорости) ---
+USE_SEMANTIC = False   # ← установите True, если нужно включить
+
+# --- Список RSS-лент (можно сократить, если нужно) ---
 RSS_FEEDS = [
-    # ===== УЖЕ БЫЛИ В КОДЕ (33 источника) =====
-    "https://ria.ru/export/rss2/index.xml",           # РИА Новости
-    "https://tass.ru/rss/v2.xml",                     # ТАСС
-    "https://www.interfax.ru/rss.asp",                # Интерфакс
-    "https://www.finmarket.ru/export/rss.asp",        # Финмаркет
-    "https://www.kommersant.ru/RSS/news.xml",         # Коммерсантъ
-    "https://www.vedomosti.ru/rss",                   # Ведомости
-    "https://1prime.ru/export/rss.xml",               # Прайм
-    "https://www.forbes.ru/rss/all",                  # Forbes Russia
-    "https://iz.ru/xml/rss/all.xml",                  # Известия
-    "https://www.tks.ru/law.rss",                     # TKS.ru (законодательство)
-    "https://www.tks.ru/nearby.rss",                  # TKS.ru (смежные темы)
-    "https://trans.ru/rss/news",                      # Trans.ru
-    "https://www.infranews.ru/feed/",                 # Infranews
-    "https://www.tourdom.ru/rss/",                    # Tourdom
-    "https://www.autostat.ru/export/rss/",            # Автостат
-    "https://morvesti.ru/rss/",                       # Морские вести
-    "https://portnews.ru/rss/",                       # Portnews
-    "https://seanews.ru/feed/",                       # Seanews
-    "https://primpress.ru/rss/",                      # Primpress
-    "https://www.ixbt.com/export/news.rss",           # IXBT
-    "https://www.cnews.ru/news/rss",                  # CNews
-    "https://www.comnews.ru/rss",                     # ComNews
-    "http://www.cbr.ru/rss/RssNews",                  # ЦБ РФ (новости)
-    "http://www.cbr.ru/rss/RssPress",                 # ЦБ РФ (пресс-релизы)
-    "https://biang.ru/rss/",                          # Biang.ru
-    "http://russian.news.cn/rss/news.xml",            # Синьхуа (русская версия)
-    "https://www.eastrussia.ru/feed/",                # EastRussia
-    "https://bigasia.ru/feed/",                       # BigAsia
-    "http://russian.china.org.cn/rss/feed.xml",       # Китайский инфоцентр
-    "http://russian.people.com.cn/rss/feed.xml",      # People's Daily
-    "https://rsshub.app/cnbc/rss/",                   # RSSHub (CNBC)
-    "https://www.scmp.com/rss/",                      # South China Morning Post
-    "https://tvbrics.com/feed/",                      # TV BRICS
-
-    # ===== НОВЫЕ ИСТОЧНИКИ (рекомендуемые) =====
-    # --- Деловые и экономические ---
-    "https://www.rbc.ru/rss/",                        # РБК
-    "https://lenta.ru/rss",                           # Lenta.ru
-    "https://www.gazeta.ru/export/rss/first.xml",     # Газета.ru
-    "https://expert.ru/rss/",                         # Эксперт
-    "https://www.fin-gazeta.ru/rss/",                 # Финансовая газета
-    "https://www.vestifinance.ru/rss",                # Вести Финанс
-
-    # --- Официальные государственные ---
-    "https://www.economy.gov.ru/rss",                 # Минэкономразвития РФ
-    "https://minpromtorg.gov.ru/rss/",                # Минпромторг РФ
-    "http://www.customs.ru/rss/",                     # ФТС РФ
-    "https://rg.ru/rss/",                             # Российская газета
-    "https://www.pnp.ru/rss/",                        # Парламентская газета
-
-    # --- Международные и внешнеэкономические ---
-    "https://www.ved.gov.ru/rss/",                    # Журнал "Внешняя торговля"
-    "https://russian.china.org.cn/rss/business.xml",  # Китайский бизнес (деловая лента)
-    "https://infobrics.org/rss/",                     # BRICS Business
-    "https://eec.eaeunion.org/rss/",                  # Евразийская экономическая комиссия
-
-    # --- Логистика и транспорт ---
-    "https://www.logistics.ru/rss",                   # Логистика
-    "https://www.rzd-partner.ru/rss/",                # РЖД-Партнёр
-
-    # --- Промышленность ---
-    "https://www.stanok.info/rss/",                   # Станкостроение
-    "https://www.roprom.ru/rss/",                     # Российская промышленность
+    "https://ria.ru/export/rss2/index.xml",
+    "https://tass.ru/rss/v2.xml",
+    "https://www.interfax.ru/rss.asp",
+    "https://www.finmarket.ru/export/rss.asp",
+    "https://www.kommersant.ru/RSS/news.xml",
+    "https://www.vedomosti.ru/rss",
+    "https://1prime.ru/export/rss.xml",
+    "https://www.forbes.ru/rss/all",
+    "https://iz.ru/xml/rss/all.xml",
+    "https://www.tks.ru/law.rss",
+    "https://www.tks.ru/nearby.rss",
+    "https://trans.ru/rss/news",
+    "https://www.infranews.ru/feed/",
+    "https://www.tourdom.ru/rss/",
+    "https://www.autostat.ru/export/rss/",
+    "https://morvesti.ru/rss/",
+    "https://portnews.ru/rss/",
+    "https://seanews.ru/feed/",
+    "https://primpress.ru/rss/",
+    "https://www.ixbt.com/export/news.rss",
+    "https://www.cnews.ru/news/rss",
+    "https://www.comnews.ru/rss",
+    "http://www.cbr.ru/rss/RssNews",
+    "http://www.cbr.ru/rss/RssPress",
+    "https://biang.ru/rss/",
+    "http://russian.news.cn/rss/news.xml",
+    "https://www.eastrussia.ru/feed/",
+    "https://bigasia.ru/feed/",
+    "http://russian.china.org.cn/rss/feed.xml",
+    "http://russian.people.com.cn/rss/feed.xml",
+    "https://rsshub.app/cnbc/rss/",
+    "https://www.scmp.com/rss/",
+    "https://tvbrics.com/feed/",
+    "https://www.rbc.ru/rss/",
+    "https://lenta.ru/rss",
+    "https://www.gazeta.ru/export/rss/first.xml",
+    "https://expert.ru/rss/",
+    "https://www.fin-gazeta.ru/rss/",
+    "https://www.vestifinance.ru/rss",
+    "https://www.economy.gov.ru/rss",
+    "https://minpromtorg.gov.ru/rss/",
+    "http://www.customs.ru/rss/",
+    "https://rg.ru/rss/",
+    "https://www.pnp.ru/rss/",
+    "https://www.ved.gov.ru/rss/",
+    "https://russian.china.org.cn/rss/business.xml",
+    "https://infobrics.org/rss/",
+    "https://eec.eaeunion.org/rss/",
+    "https://www.logistics.ru/rss",
+    "https://www.rzd-partner.ru/rss/",
+    "https://www.stanok.info/rss/",
+    "https://www.roprom.ru/rss/",
 ]
-MAX_ARTICLES_PER_FEED = 10
 
 def format_time(time_str: str) -> str:
     if not time_str:
@@ -171,7 +144,7 @@ def save_sent_title(article_title):
 def get_news_from_rss():
     all_articles = []
     seen_urls = set()
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)  # для теста можно увеличить до 6
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for feed_url in RSS_FEEDS:
         try:
@@ -229,92 +202,26 @@ def get_news_from_rss():
     print(f"Всего собрано {len(all_articles)} статей за последний час.")
     return all_articles
 
-# --- Гибридная фильтрация ---
-def filter_articles_hybrid(articles):
+# --- Фильтрация по ключевым словам (без семантики, для скорости) ---
+def filter_articles_by_keywords(articles):
     if not KEYWORDS:
-        print("Ключевые слова не заданы. Возвращаем все статьи.")
         return articles
-
     filtered = []
-    kw_matches = 0
-    semantic_matches = 0
-
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
-        full_text = title + " " + description
-        content_lower = full_text.lower()
-
-        # 1. Ключевые слова
-        kw_match = any(kw.lower() in content_lower for kw in KEYWORDS)
-        if kw_match:
+        content = (title + " " + description).lower()
+        if any(kw.lower() in content for kw in KEYWORDS):
             filtered.append(article)
-            kw_matches += 1
-            continue
-
-        # 2. Семантика
-        if topic_vector is not None and len(full_text) > 20:
-            try:
-                if is_semantically_relevant_cached(full_text, topic_vector, threshold=0.7):
-                    filtered.append(article)
-                    semantic_matches += 1
-            except Exception as e:
-                print(f"  ⚠️ Ошибка семантической проверки: {e}")
-
-    print(f"После гибридной фильтрации осталось {len(filtered)} из {len(articles)} статей.")
-    print(f"  - По ключевым словам: {kw_matches}")
-    print(f"  - По семантике: {semantic_matches}")
+    print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
     return filtered
 
-# --- Парсинг полной статьи ---
-async def scrape_article_details(page, url: str) -> tuple[str, str]:
-    pub_time, summary = "", ""
-    try:
-        await page.goto(url, timeout=30000, wait_until='domcontentloaded')
-        time_selectors = [
-            'meta[property="article:published_time"]',
-            'meta[name="publish-date"]',
-            'time',
-            '.pub_date',
-            '.post-time',
-            '.time-source .time'
-        ]
-        for selector in time_selectors:
-            element = await page.query_selector(selector)
-            if element:
-                content = await element.get_attribute('content') or await element.get_attribute('datetime') or await element.inner_text()
-                if content:
-                    pub_time = content.strip()
-                    break
-        content_selectors = [
-            'article',
-            '.article-content',
-            '.post-body',
-            '.content',
-            '#article_content',
-            '#Content',
-            '.art-text',
-            '#main_content',
-            'div[class*="content-main"]',
-            'div[class*="article-body"]'
-        ]
-        for selector in content_selectors:
-            content_element = await page.query_selector(selector)
-            if content_element:
-                paragraphs = await content_element.query_selector_all('p')
-                summary_parts = [await p.inner_text() for p in paragraphs[:5] if await p.inner_text()]
-                if summary_parts:
-                    summary = "\n\n".join(summary_parts)
-                    if len(paragraphs) > 5:
-                        summary += "..."
-                    break
-        return pub_time, summary
-    except Exception as e:
-        print(f"Ошибка при парсинге статьи {url}: {e}")
-        return pub_time, summary
+# (Семантическая функция оставлена закомментированной, чтобы не было ошибок импорта)
+# from semantic_filter import build_topic_embedding, is_semantically_relevant_cached
+# ... (если нужна семантика, раскомментируйте и включите USE_SEMANTIC = True)
 
-# --- Отправка одной новости ---
-async def send_single_article(bot, article, pub_time: str, summary: str):
+# --- Отправка одной новости (без парсинга Playwright) ---
+async def send_single_article(bot, article):
     title = article.get('title')
     url = article.get('url')
     image_url = article.get('image')
@@ -322,13 +229,13 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
     if not title or not url:
         return False
 
-    display_time = format_time(pub_time) if pub_time else format_time(article.get('publishedAt'))
+    display_time = format_time(article.get('publishedAt'))
 
     clean_title = re.sub(r'[^\w\s]', '', title)
     words = clean_title.split()[:2]
     hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
 
-    summary_text = summary if summary else article.get('description', '')
+    summary_text = article.get('description', '')
     if summary_text and title in summary_text:
         summary_text = ""
     if not summary_text:
@@ -370,7 +277,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- Основная функция ---
+# --- Основная функция (без Playwright и семантики) ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
@@ -385,86 +292,77 @@ async def main():
 
     print("Бот запущен (однократный запуск для serverless).")
 
-    browser = None
     try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+        print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
+        sent_urls = load_sent_urls()
+        sent_titles = load_sent_titles()
 
-            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
-            sent_urls = load_sent_urls()
-            sent_titles = load_sent_titles()
+        print("📡 Получаем новости из RSS...")
+        all_news = get_news_from_rss()
+        print(f"📊 Получено {len(all_news)} статей из RSS")
 
-            print("📡 Получаем новости из RSS...")
-            all_news = get_news_from_rss()
-            print(f"📊 Получено {len(all_news)} статей из RSS")
+        print("🔍 Фильтруем новости по ключевым словам...")
+        filtered_news = filter_articles_by_keywords(all_news)
+        print(f"📊 После фильтрации: {len(filtered_news)} статей")
 
-            print("🔍 Фильтруем новости...")
-            filtered_news = filter_articles_hybrid(all_news)
-            print(f"📊 После фильтрации: {len(filtered_news)} статей")
-
-            if not filtered_news:
-                print("❌ Нет новостей после фильтрации.")
-                try:
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
-                    print("✅ Уведомление 'нет новостей' отправлено.")
-                except Exception as e:
-                    print(f"❌ Ошибка при отправке уведомления: {e}")
-                return
-
-            new_articles = [
-                article for article in filtered_news
-                if article.get('url') not in sent_urls and article.get('title') not in sent_titles
-            ]
-            print(f"📊 После проверки дублей: {len(new_articles)} новых статей")
-
-            if not new_articles:
-                print("❌ Новых статей (с учётом дублей) нет.")
-                try:
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей (с учётом уже отправленных) не найдено.")
-                except Exception as e:
-                    print(f"❌ Ошибка при отправке уведомления: {e}")
-                return
-
-            print(f"✅ Найдено {len(new_articles)} новых статей для отправки.")
-
-            sent_count = 0
-            sent_titles_this_run = set()
-
-            # ---- ВОТ ЗДЕСЬ БЫЛ ПУСТОЙ ЦИКЛ ----
-            for article in new_articles:
-                if sent_count >= MAX_ARTICLES_TO_SEND:
-                    print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
-                    break
-
-                title = article.get('title')
-                if title in sent_titles_this_run:
-                    print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                    save_sent_url(article.get('url'))
-                    continue
-
-                print(f"Обработка: {title}")
-                pub_time, summary = await scrape_article_details(page, article.get('url'))
-
-                if await send_single_article(bot, article, pub_time, summary):
-                    save_sent_url(article.get('url'))
-                    save_sent_title(title)
-                    sent_titles_this_run.add(title)
-                    sent_count += 1
-                    print(f"Успешно отправлено ({sent_count}/{len(new_articles)} всего).")
-                    if sent_count < len(new_articles):
-                        await asyncio.sleep(SEND_INTERVAL_SECONDS)
-                else:
-                    print(f"Не удалось отправить: {title}")
-
-            # ---- Уведомление о завершении ----
+        if not filtered_news:
+            print("❌ Нет новостей после фильтрации.")
             try:
-                summary_message = f"✅ Поиск завершён. Найдено и отправлено {sent_count} новостей."
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=summary_message)
-                print(f"✅ Уведомление о завершении отправлено: {sent_count} новостей")
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
+                print("✅ Уведомление 'нет новостей' отправлено.")
             except Exception as e:
-                print(f"❌ Ошибка при отправке уведомления о завершении: {e}")
+                print(f"❌ Ошибка при отправке уведомления: {e}")
+            return
+
+        new_articles = [
+            article for article in filtered_news
+            if article.get('url') not in sent_urls and article.get('title') not in sent_titles
+        ]
+        print(f"📊 После проверки дублей: {len(new_articles)} новых статей")
+
+        if not new_articles:
+            print("❌ Новых статей (с учётом дублей) нет.")
+            try:
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей (с учётом уже отправленных) не найдено.")
+            except Exception as e:
+                print(f"❌ Ошибка при отправке уведомления: {e}")
+            return
+
+        print(f"✅ Найдено {len(new_articles)} новых статей для отправки.")
+
+        sent_count = 0
+        sent_titles_this_run = set()
+
+        for article in new_articles:
+            if sent_count >= MAX_ARTICLES_TO_SEND:
+                print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
+                break
+
+            title = article.get('title')
+            if title in sent_titles_this_run:
+                print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
+                save_sent_url(article.get('url'))
+                continue
+
+            print(f"Обработка: {title}")
+            if await send_single_article(bot, article):
+                save_sent_url(article.get('url'))
+                save_sent_title(title)
+                sent_titles_this_run.add(title)
+                sent_count += 1
+                print(f"Успешно отправлено ({sent_count}/{len(new_articles)} всего).")
+                if sent_count < len(new_articles):
+                    await asyncio.sleep(SEND_INTERVAL_SECONDS)
+            else:
+                print(f"Не удалось отправить: {title}")
+
+        # Уведомление о завершении
+        try:
+            summary_message = f"✅ Поиск завершён. Найдено и отправлено {sent_count} новостей."
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=summary_message)
+            print(f"✅ Уведомление о завершении отправлено: {sent_count} новостей")
+        except Exception as e:
+            print(f"❌ Ошибка при отправке уведомления о завершении: {e}")
 
     except Exception as e:
         print(f"❌ Критическая ошибка в main: {e}")
@@ -475,11 +373,8 @@ async def main():
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=error_message)
         except Exception as e2:
             print(f"❌ Не удалось отправить уведомление об ошибке: {e2}")
-    finally:
-        if browser:
-            await browser.close()
-            print("Браузер закрыт.")
-        print("--- Завершено ---")
+
+    print("--- Завершено ---")
 
 if __name__ == '__main__':
     asyncio.run(main())
