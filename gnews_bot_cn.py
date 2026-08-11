@@ -58,6 +58,7 @@ RSS_FEEDS = [
     "https://www.kommersant.ru/RSS/news.xml",
     "https://www.vedomosti.ru/rss",
     "https://1prime.ru/export/rss.xml",
+    "https://www.forbes.ru/rss/all",
     "https://iz.ru/xml/rss/all.xml",
     "https://www.tks.ru/law.rss",
     "https://www.tks.ru/nearby.rss",
@@ -82,21 +83,7 @@ RSS_FEEDS = [
     "http://russian.people.com.cn/rss/feed.xml",
     "https://rsshub.app/cnbc/rss/",
     "https://www.scmp.com/rss/",
-    "https://tvbrics.com/feed/",
-    "https://www.rbc.ru/rss/",
-    "https://lenta.ru/rss",
-    "https://www.gazeta.ru/export/rss/first.xml",
-    "https://expert.ru/rss/",
-    "https://www.fin-gazeta.ru/rss/",
-    "https://www.vestifinance.ru/rss",
-    "https://www.economy.gov.ru/rss",
-    "https://minpromtorg.gov.ru/rss/",
-    "http://www.customs.ru/rss/",
-    "https://rg.ru/rss/",
-    "https://www.pnp.ru/rss/",
-    "https://www.ved.gov.ru/rss/",
-    "https://russian.china.org.cn/rss/business.xml",
-    "https://www.logistics.ru/rss"
+    "https://tvbrics.com/feed/"
 ]
 
 # --- Функции работы с файлами (вместо SQLite) ---
