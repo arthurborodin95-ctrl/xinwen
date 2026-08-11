@@ -263,6 +263,11 @@ async def send_single_article(bot, article):
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
+    # ---- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ----
+    init_db()
+    print("✅ База данных инициализирована")
+    # ------------------------------------
+
     # Уведомление о запуске
     try:
         print("🔍 Отправка уведомления о запуске...")
@@ -276,8 +281,6 @@ async def main():
 
     try:
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
-        sent_urls = load_sent_urls()
-        sent_titles = load_sent_titles()
 
         print("📡 Получаем новости из RSS...")
         all_news = get_news_from_rss()
@@ -291,15 +294,17 @@ async def main():
             print("❌ Нет новостей после фильтрации.")
             try:
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
-                print("✅ Уведомление 'нет новостей' отправлено.")
             except Exception as e:
                 print(f"❌ Ошибка при отправке уведомления: {e}")
             return
 
-        new_articles = [
-            article for article in filtered_news
-            if article.get('url') not in sent_urls and article.get('title') not in sent_titles
-        ]
+        # ---- Проверка дублей через SQLite ----
+        new_articles = []
+        for article in filtered_news:
+            if not is_article_sent(article.get('url')):
+                new_articles.append(article)
+        # ----------------------------------------
+
         print(f"📊 После проверки дублей: {len(new_articles)} новых статей")
 
         if not new_articles:
@@ -313,24 +318,22 @@ async def main():
         print(f"✅ Найдено {len(new_articles)} новых статей для отправки.")
 
         sent_count = 0
-        sent_titles_this_run = set()
-
         for article in new_articles:
             if sent_count >= MAX_ARTICLES_TO_SEND:
                 print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
                 break
 
             title = article.get('title')
-            if title in sent_titles_this_run:
-                print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                save_sent_url(article.get('url'))
-                continue
-
             print(f"Обработка: {title}")
+
             if await send_single_article(bot, article):
-                save_sent_url(article.get('url'))
-                save_sent_title(title)
-                sent_titles_this_run.add(title)
+                # ---- СОХРАНЯЕМ В БД ----
+                mark_article_sent(
+                    article.get('url'),
+                    title,
+                    article.get('source', {}).get('name', '')
+                )
+                # ------------------------
                 sent_count += 1
                 print(f"Успешно отправлено ({sent_count}/{len(new_articles)} всего).")
                 if sent_count < len(new_articles):
@@ -340,7 +343,8 @@ async def main():
 
         # Уведомление о завершении
         try:
-            summary_message = f"✅ Поиск завершён. Найдено и отправлено {sent_count} новостей."
+            total_sent = get_total_sent()
+            summary_message = f"✅ Поиск завершён. Отправлено {sent_count} новостей. Всего в БД: {total_sent}."
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=summary_message)
             print(f"✅ Уведомление о завершении отправлено: {sent_count} новостей")
         except Exception as e:
@@ -357,7 +361,3 @@ async def main():
             print(f"❌ Не удалось отправить уведомление об ошибке: {e2}")
 
     print("--- Завершено ---")
-
-if __name__ == '__main__':
-    asyncio.run(main())
-    sys.exit(0)
