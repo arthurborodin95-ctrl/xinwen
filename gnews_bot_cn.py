@@ -303,10 +303,20 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- Основная функция ---
+# --- Основная функция (с уведомлениями) ---
 async def main():
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
     print("Бот запущен (однократный запуск для serverless).")
+
+    # ============================================================
+    # 🔍 УВЕДОМЛЕНИЕ О НАЧАЛЕ ПОИСКА
+    # ============================================================
+    try:
+        start_message = "🔍 Начинаю поиск свежих новостей..."
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=start_message)
+        print("✅ Уведомление о начале поиска отправлено.")
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить уведомление о начале: {e}")
 
     browser = None
     try:
@@ -324,6 +334,11 @@ async def main():
 
             if not filtered_news:
                 print("Нет новостей после фильтрации.")
+                # Уведомление, что новостей нет
+                try:
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
+                except Exception as e:
+                    print(f"⚠️ Не удалось отправить уведомление: {e}")
                 return
 
             new_articles = [
@@ -332,6 +347,10 @@ async def main():
             ]
             if not new_articles:
                 print("Новых статей (с учётом дублей) нет.")
+                try:
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей (с учётом уже отправленных) не найдено.")
+                except Exception as e:
+                    print(f"⚠️ Не удалось отправить уведомление: {e}")
                 return
 
             print(f"Найдено {len(new_articles)} новых статей для отправки.")
@@ -364,8 +383,34 @@ async def main():
                 else:
                     print(f"Не удалось отправить: {title}")
 
+            # ============================================================
+            # 📊 УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ (с краткой статистикой)
+            # ============================================================
+            try:
+                total_found = len(all_news)
+                total_filtered = len(filtered_news)
+                total_new = len(new_articles)
+                stats_message = (
+                    f"✅ Поиск завершён.\n"
+                    f"📊 Статистика:\n"
+                    f"  - Найдено всего: {total_found}\n"
+                    f"  - После фильтрации: {total_filtered}\n"
+                    f"  - Отправлено (новых): {sent_count}\n"
+                    f"  - Пропущено (уже были): {total_new - sent_count}"
+                )
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=stats_message)
+                print("✅ Уведомление о завершении отправлено.")
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить уведомление о завершении: {e}")
+
     except Exception as e:
         print(f"Критическая ошибка в main: {e}")
+        # Уведомление об ошибке
+        try:
+            error_message = f"❌ Произошла ошибка при выполнении поиска: {str(e)[:100]}"
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=error_message)
+        except Exception as e2:
+            print(f"⚠️ Не удалось отправить уведомление об ошибке: {e2}")
     finally:
         if browser:
             await browser.close()
