@@ -1,24 +1,20 @@
 import os
-from openrouter import OpenRouter
+from yandex_ai import call_yandex_gpt
 
-API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not API_KEY:
-    print("⚠️ OPENROUTER_API_KEY не задан. Анализ новостей будет отключён.")
-
-client = OpenRouter(api_key=API_KEY) if API_KEY else None
-
-# Модель для анализа новостей (бесплатная)
-ANALYSIS_MODEL = "qwen/qwen-2.5-7b-instruct:free"  # или qwen/qwen-2.5-7b-instruct:free
-REPORT_MODEL = "qwen/qwen-2.5-7b-instruct:free"
+# Проверяем наличие ключей
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
+if not YANDEX_FOLDER_ID or not YANDEX_API_KEY:
+    print("⚠️ YandexGPT не настроен. Анализ новостей будет отключён.")
 
 async def analyze_news(title: str, content: str) -> str:
     """
-    Экспертный анализ новости через OpenRouter.
+    Экспертный анализ новости через YandexGPT.
     Возвращает краткий комментарий (2-3 предложения).
     """
-    if client is None:
-        return "Анализ недоступен (ключ не задан)."
-    
+    if not YANDEX_FOLDER_ID or not YANDEX_API_KEY:
+        return "Анализ недоступен: YandexGPT не настроен."
+
     if not content or len(content.strip()) < 50:
         return "Недостаточно текста для анализа."
 
@@ -35,17 +31,8 @@ async def analyze_news(title: str, content: str) -> str:
 
 Ответ должен быть кратким, нейтральным и информативным.
 """
-    try:
-        response = client.chat.send(
-            model=ANALYSIS_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200,
-            temperature=0.4,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"❌ Ошибка при анализе новости: {e}")
-        return f"Анализ временно недоступен ({str(e)[:50]})"
+    response = call_yandex_gpt(prompt, max_tokens=200, temperature=0.4)
+    return response if response else "Анализ временно недоступен."
 
 async def generate_report(
     total_found: int,
@@ -56,10 +43,10 @@ async def generate_report(
     errors: list
 ) -> str:
     """
-    Итоговый отчёт о работе бота через OpenRouter.
+    Итоговый отчёт о работе бота через YandexGPT.
     """
-    if client is None:
-        return "Отчёт недоступен (ключ не задан)."
+    if not YANDEX_FOLDER_ID or not YANDEX_API_KEY:
+        return "Отчёт недоступен: YandexGPT не настроен."
 
     sources_sample = sources_checked[:10]
     skipped_sample = skipped_titles[:5]
@@ -83,14 +70,5 @@ async def generate_report(
 
 Ответ должен быть деловым, без лишней воды.
 """
-    try:
-        response = client.chat.send(
-            model=REPORT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.3,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"❌ Ошибка при генерации отчёта: {e}")
-        return f"Отчёт временно недоступен ({str(e)[:50]})"
+    response = call_yandex_gpt(prompt, max_tokens=300, temperature=0.3)
+    return response if response else "Отчёт временно недоступен."
