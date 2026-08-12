@@ -29,5 +29,4 @@ playwright
 sentence-transformers
 scikit-learn
 numpy
-openrouter
-httpx
+yandexcloud
