@@ -8,8 +8,8 @@ if not API_KEY:
 client = OpenRouter(api_key=API_KEY) if API_KEY else None
 
 # Модель для анализа новостей (бесплатная)
-ANALYSIS_MODEL = "deepseek/deepseek-chat:free"  # или qwen/qwen-2.5-7b-instruct:free
-REPORT_MODEL = "deepseek/deepseek-chat:free"
+ANALYSIS_MODEL = "qwen/qwen-2.5-7b-instruct:free"  # или qwen/qwen-2.5-7b-instruct:free
+REPORT_MODEL = "qwen/qwen-2.5-7b-instruct:free"
 
 async def analyze_news(title: str, content: str) -> str:
     """
