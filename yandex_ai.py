@@ -123,3 +123,41 @@ def analyze_sentiment(title: str, content: str) -> dict:
         except:
             pass
     return {"sentiment": "neutral", "confidence": 0.5}
+
+
+# ============================================================
+# НОВАЯ ФУНКЦИЯ: ПОЛУЧЕНИЕ ЭМБЕДДИНГА (ВЕКТОРА) ТЕКСТА
+# ============================================================
+
+def get_embedding(text: str) -> list:
+    """
+    Отправляет текст в YandexGPT Embeddings и возвращает вектор (список чисел).
+    Документация: https://cloud.yandex.ru/docs/yandexgpt/api-ref/Embedding
+    """
+    if not FOLDER_ID or not API_KEY:
+        print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
+        return None
+
+    url = "https://llm.api.cloud.yandex.net/embeddings"
+    headers = {
+        "Authorization": f"Api-Key {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "modelUri": f"emb://{FOLDER_ID}/text-embedding-004",
+        "text": text[:500],  # ограничиваем длину для экономии
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        embedding = result.get("embedding")
+        if embedding:
+            return embedding
+        else:
+            print("⚠️ В ответе не найден 'embedding'")
+            return None
+    except Exception as e:
+        print(f"❌ Ошибка получения эмбеддинга: {e}")
+        return None
