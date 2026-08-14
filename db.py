@@ -3,14 +3,13 @@ import json
 
 DB_FILE = 'news.db'
 
-# ==================== ИНИЦИАЛИЗАЦИЯ БАЗЫ ====================
+# ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
 def init_db():
     """Создаёт все необходимые таблицы и индексы при первом запуске."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # 1. Таблица отправленных статей (была)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_articles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,17 +21,24 @@ def init_db():
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_url ON sent_articles (url)')
 
-    # 2. Таблица кэша эмбеддингов (новая)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS article_embeddings (
             hash TEXT PRIMARY KEY,
-            embedding TEXT NOT NULL,   -- храним как JSON-строку (массив чисел)
+            embedding TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON article_embeddings (created_at)')
 
-    # 3. Таблица истории сессий (новая)
+    # Таблица для эталонных векторов
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS topic_embeddings (
+            group_name TEXT PRIMARY KEY,
+            embedding TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS session_stats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,20 +50,19 @@ def init_db():
             semantic_failed INTEGER,
             avg_similarity REAL,
             threshold REAL,
-            extra_data TEXT   -- JSON для дополнительных данных (например, список источников)
+            extra_data TEXT
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON session_stats (timestamp)')
 
     conn.commit()
     conn.close()
-    print("✅ База данных инициализирована (все таблицы созданы).")
+    print("✅ База данных инициализирована.")
 
 
-# ==================== РАБОТА С ОТПРАВЛЕННЫМИ СТАТЬЯМИ ====================
+# ==================== ОТПРАВЛЕННЫЕ СТАТЬИ ====================
 
 def is_article_sent(url: str) -> bool:
-    """Проверяет, отправлялась ли уже статья с таким URL."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT 1 FROM sent_articles WHERE url = ?', (url,))
@@ -66,7 +71,6 @@ def is_article_sent(url: str) -> bool:
     return exists
 
 def mark_article_sent(url: str, title: str, source: str = ''):
-    """Сохраняет отправленную статью в БД."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -77,7 +81,6 @@ def mark_article_sent(url: str, title: str, source: str = ''):
     conn.close()
 
 def get_total_sent() -> int:
-    """Возвращает общее количество отправленных статей."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM sent_articles')
@@ -86,7 +89,6 @@ def get_total_sent() -> int:
     return count
 
 def clear_old_entries(days: int = 30):
-    """Удаляет отправленные статьи старше указанного количества дней."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -97,24 +99,19 @@ def clear_old_entries(days: int = 30):
     conn.close()
 
 
-# ==================== КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ====================
+# ==================== КЭШ ЭМБЕДДИНГОВ СТАТЕЙ ====================
 
 def get_embedding(text_hash: str):
-    """
-    Возвращает сохранённый эмбеддинг по хешу текста,
-    если он есть в кэше. Иначе возвращает None.
-    """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT embedding FROM article_embeddings WHERE hash = ?', (text_hash,))
     row = cursor.fetchone()
     conn.close()
     if row:
-        return json.loads(row[0])  # возвращаем список чисел
+        return json.loads(row[0])
     return None
 
 def save_embedding(text_hash: str, embedding: list):
-    """Сохраняет эмбеддинг (список чисел) в кэш по хешу текста."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -125,7 +122,6 @@ def save_embedding(text_hash: str, embedding: list):
     conn.close()
 
 def clear_old_embeddings(days: int = 30):
-    """Удаляет старые эмбеддинги (экономия места)."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -136,7 +132,52 @@ def clear_old_embeddings(days: int = 30):
     conn.close()
 
 
-# ==================== ИСТОРИЯ СЕССИЙ (ДЛЯ АНАЛИТИКИ) ====================
+# ==================== ЭТАЛОННЫЕ ВЕКТОРЫ (ТЕМАТИЧЕСКИЕ ГРУППЫ) ====================
+
+def get_topic_embedding(group_name: str):
+    """Возвращает сохранённый эталонный вектор для группы."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT embedding FROM topic_embeddings WHERE group_name = ?', (group_name,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return json.loads(row[0])
+    return None
+
+def save_topic_embedding(group_name: str, embedding: list):
+    """Сохраняет эталонный вектор для группы."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT OR REPLACE INTO topic_embeddings (group_name, embedding) VALUES (?, ?)',
+        (group_name, json.dumps(embedding))
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_topic_embeddings():
+    """Возвращает все сохранённые эталонные векторы (словарь group_name -> embedding)."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT group_name, embedding FROM topic_embeddings')
+    rows = cursor.fetchall()
+    conn.close()
+    result = {}
+    for name, emb_json in rows:
+        result[name] = json.loads(emb_json)
+    return result
+
+def clear_topic_embeddings():
+    """Удаляет все эталонные векторы (если нужно пересчитать)."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM topic_embeddings')
+    conn.commit()
+    conn.close()
+
+
+# ==================== СТАТИСТИКА СЕССИЙ ====================
 
 def save_session_stats(
     total_found: int,
@@ -148,10 +189,6 @@ def save_session_stats(
     threshold: float,
     extra_data: dict = None
 ):
-    """
-    Сохраняет статистику сессии в таблицу session_stats.
-    extra_data — опциональный словарь с дополнительными данными (например, список источников).
-    """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -177,10 +214,6 @@ def save_session_stats(
     conn.close()
 
 def get_recent_stats(limit: int = 10):
-    """
-    Возвращает последние N записей статистики сессий (по убыванию времени).
-    Используется для анализа динамики и адаптивного порога.
-    """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -198,10 +231,6 @@ def get_recent_stats(limit: int = 10):
     return rows
 
 def get_last_n_avg_similarity(n: int = 5):
-    """
-    Возвращает среднюю схожесть за последние N сессий.
-    Полезно для адаптивной настройки порога.
-    """
     rows = get_recent_stats(n)
     if not rows:
         return None
@@ -209,9 +238,6 @@ def get_last_n_avg_similarity(n: int = 5):
     return total_sim / len(rows) if rows else None
 
 def get_last_n_sent_count(n: int = 5):
-    """
-    Возвращает среднее количество отправленных новостей за последние N сессий.
-    """
     rows = get_recent_stats(n)
     if not rows:
         return None
