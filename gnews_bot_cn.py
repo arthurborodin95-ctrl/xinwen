@@ -18,7 +18,7 @@ from db import (
     init_db,
     save_session_stats,
     get_embedding,
-    save_embedding,
+    save_embedding,          # ← запятая добавлена
     get_all_topic_embeddings,
     save_topic_embedding,
     clear_topic_embeddings
@@ -54,6 +54,17 @@ KEYWORDS = [
     "Трансграничные платежи", "Трансграничный перевод", "Туризм", "ФТС РФ", "Цифровая валюта",
     "Цифровой финансовый актив (ЦФА)", "Экспорт в Россию", "Экспорт из Южной Кореи",
     "Экспорт из Японии", "Экспорт из Китая", "Крипта", "Крипто Валюта"
+]
+
+# --- КЛЮЧЕВЫЕ СЛОВА ИСКЛЮЧЕНИЙ (стоп-слова) ---
+EXCLUDED_KEYWORDS = [
+    "нефть", "нефтяной", "нефтепродукты",
+    "газ", "газовый", "сжиженный газ", "спг",
+    "алюминий", "алюминиевый",
+    "сырьё", "сырьевой", "промышленное сырье",
+    "металл", "металлургия", "руда",
+    "добыча", "добывающий",
+    "уголь", "угледобыча",
 ]
 
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
@@ -221,18 +232,38 @@ def get_news_from_rss():
     print(f"Всего собрано {len(all_articles)} статей из RSS.")
     return all_articles
 
-# --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ ---
-def filter_articles_by_keywords(articles):
+# --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ С ИСКЛЮЧЕНИЯМИ ---
+def filter_articles_by_keywords_and_exclusions(articles):
+    """
+    Фильтрует статьи:
+    1. Оставляет те, которые содержат хотя бы одно ключевое слово из KEYWORDS.
+    2. Удаляет те, которые содержат любое слово из EXCLUDED_KEYWORDS.
+    """
     if not KEYWORDS:
         return articles
+
     filtered = []
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
         content = (title + " " + description).lower()
-        if any(kw.lower() in content for kw in KEYWORDS):
-            filtered.append(article)
-    print(f"После фильтрации по ключевым словам осталось {len(filtered)} из {len(articles)} статей.")
+
+        # 1. Проверка на наличие ключевых слов
+        has_keyword = any(kw.lower() in content for kw in KEYWORDS)
+        if not has_keyword:
+            continue
+
+        # 2. Проверка на наличие слов исключений
+        if EXCLUDED_KEYWORDS:
+            has_excluded = any(excl.lower() in content for excl in EXCLUDED_KEYWORDS)
+            if has_excluded:
+                # Можно добавить логирование (опционально)
+                # print(f"⏭️ Исключена статья из-за слова '{excl}': {title[:50]}")
+                continue
+
+        filtered.append(article)
+
+    print(f"После фильтрации (ключевые слова + исключения) осталось {len(filtered)} из {len(articles)} статей.")
     return filtered
 
 # --- ПАРСИНГ ПОЛНОЙ СТАТЬИ (Playwright) ---
@@ -400,7 +431,9 @@ async def main():
             sent_titles = load_sent_titles()
 
             all_news = get_news_from_rss()
-            filtered_news = filter_articles_by_keywords(all_news)
+
+            # ---- ФИЛЬТРАЦИЯ С ИСКЛЮЧЕНИЯМИ ----
+            filtered_news = filter_articles_by_keywords_and_exclusions(all_news)
 
             if not filtered_news:
                 print("Нет новостей после фильтрации.")
