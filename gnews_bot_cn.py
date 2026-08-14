@@ -11,9 +11,6 @@ from telegram.error import BadRequest
 from datetime import datetime, timezone, timedelta
 import feedparser
 
-# --- ИМПОРТ ИИ-АНАЛИЗАТОРА ---
-from ai_analyzer import analyze_news, generate_report
-
 # --- Загрузка переменных окружения ---
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
