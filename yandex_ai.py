@@ -9,8 +9,7 @@ BASE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
 def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """
-    Отправляет запрос к YandexGPT Lite и возвращает ответ.
-    Документация: https://cloud.yandex.ru/docs/yandexgpt/api-ref/v1/TextGeneration/completion
+    Отправляет запрос к YandexGPT Pro и возвращает ответ.
     """
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
@@ -18,7 +17,7 @@ def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5
     }
 
     body = {
-        "modelUri": f"gpt://{FOLDER_ID}/yandexgpt-lite",
+        "modelUri": f"gpt://{FOLDER_ID}/yandexgpt-pro",   # ← здесь изменено
         "completionOptions": {
             "stream": False,
             "temperature": temperature,
@@ -36,15 +35,13 @@ def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5
         response = requests.post(BASE_URL, headers=headers, json=body, timeout=30)
         response.raise_for_status()
         result = response.json()
-        # Извлекаем текст ответа
         if "result" in result and "alternatives" in result["result"]:
             return result["result"]["alternatives"][0]["message"]["text"]
         else:
             return None
     except Exception as e:
-        print(f"Ошибка при запросе к YandexGPT: {e}")
+        print(f"Ошибка при запросе к YandexGPT Pro: {e}")
         return None
-
 def summarize_article(title: str, content: str) -> str:
     """
     Суммаризирует статью. Если контент слишком длинный, обрезает до 4000 символов.
