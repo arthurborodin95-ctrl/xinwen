@@ -41,7 +41,7 @@ if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     sys.exit(1)
 
 # --- Конфигурация ---
-MAX_ARTICLES_TO_SEND = 50
+MAX_ARTICLES_TO_SEND = 30
 SEND_INTERVAL_SECONDS = 20
 SENT_ARTICLES_FILE = 'sent_articles.txt'
 SENT_TITLES_FILE = 'sent_titles.txt'
@@ -72,7 +72,6 @@ RSS_FEEDS = [
     "https://portnews.ru/rss/",
     "https://seanews.ru/feed/",
     "https://primpress.ru/rss/",
-    "https://www.ixbt.com/export/news.rss",
     "https://www.cnews.ru/news/rss",
     "https://www.comnews.ru/rss",
     "http://www.cbr.ru/rss/RssNews",
