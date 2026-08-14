@@ -15,9 +15,13 @@ import feedparser
 # --- ИМПОРТЫ НОВЫХ МОДУЛЕЙ ---
 from ai_analyzer import generate_report
 from db import (
-    init_db, save_session_stats,
-    get_embedding, save_embedding,
-    get_all_topic_embeddings, save_topic_embedding, clear_topic_embeddings
+    init_db,
+    save_session_stats,
+    get_embedding,
+    save_embedding,
+    get_all_topic_embeddings,
+    save_topic_embedding,
+    clear_topic_embeddings
 )
 from yandex_ai import get_embedding as get_embedding_yandex
 
