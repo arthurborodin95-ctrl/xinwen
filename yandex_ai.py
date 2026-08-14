@@ -129,20 +129,19 @@ def analyze_sentiment(title: str, content: str) -> dict:
 def get_embedding(text: str) -> list:
     """
     Отправляет текст в YandexGPT Embeddings и возвращает вектор (список чисел).
-    Документация: https://cloud.yandex.ru/docs/yandexgpt/api-ref/Embedding
     """
     if not FOLDER_ID or not API_KEY:
         print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
         return None
 
-    url = "https://llm.api.cloud.yandex.net/embeddings"
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/embedding"  # ← исправлено
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
     }
     data = {
         "modelUri": f"emb://{FOLDER_ID}/text-embedding-004",
-        "text": text[:500],  # ограничиваем длину для экономии
+        "text": text[:500],
     }
 
     try:
