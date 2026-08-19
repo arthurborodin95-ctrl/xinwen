@@ -1,5 +1,5 @@
-- name: Run bot
-  run: python gnews_bot_cn.py
+name: News Bot
+
 on:
   schedule:
     - cron: '*/30 * * * *'
@@ -8,12 +8,16 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Cache pip packages
         uses: actions/cache@v3
         with:
@@ -21,12 +25,14 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-        run: python main.py
+        run: python gnews_bot_cn.py
