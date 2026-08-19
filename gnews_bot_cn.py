@@ -18,7 +18,7 @@ from db import (
     init_db,
     save_session_stats,
     get_embedding,
-    save_embedding,          # ← запятая добавлена
+    save_embedding,
     get_all_topic_embeddings,
     save_topic_embedding,
     clear_topic_embeddings
@@ -233,6 +233,7 @@ def get_news_from_rss():
     return all_articles
 
 # --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ С ИСКЛЮЧЕНИЯМИ ---
+
 def filter_articles_by_keywords_and_exclusions(articles):
     """
     Фильтрует статьи:
@@ -257,8 +258,6 @@ def filter_articles_by_keywords_and_exclusions(articles):
         if EXCLUDED_KEYWORDS:
             has_excluded = any(excl.lower() in content for excl in EXCLUDED_KEYWORDS)
             if has_excluded:
-                # Можно добавить логирование (опционально)
-                # print(f"⏭️ Исключена статья из-за слова '{excl}': {title[:50]}")
                 continue
 
         filtered.append(article)
@@ -266,54 +265,8 @@ def filter_articles_by_keywords_and_exclusions(articles):
     print(f"После фильтрации (ключевые слова + исключения) осталось {len(filtered)} из {len(articles)} статей.")
     return filtered
 
-# --- ПАРСИНГ ПОЛНОЙ СТАТЬИ (Playwright) ---
-async def scrape_article_details(page, url: str) -> tuple[str, str]:
-    pub_time, summary = "", ""
-    try:
-        await page.goto(url, timeout=30000, wait_until='domcontentloaded')
-        time_selectors = [
-            'meta[property="article:published_time"]',
-            'meta[name="publish-date"]',
-            'time',
-            '.pub_date',
-            '.post-time',
-            '.time-source .time'
-        ]
-        for selector in time_selectors:
-            element = await page.query_selector(selector)
-            if element:
-                content = await element.get_attribute('content') or await element.get_attribute('datetime') or await element.inner_text()
-                if content:
-                    pub_time = content.strip()
-                    break
-        content_selectors = [
-            'article',
-            '.article-content',
-            '.post-body',
-            '.content',
-            '#article_content',
-            '#Content',
-            '.art-text',
-            '#main_content',
-            'div[class*="content-main"]',
-            'div[class*="article-body"]'
-        ]
-        for selector in content_selectors:
-            content_element = await page.query_selector(selector)
-            if content_element:
-                paragraphs = await content_element.query_selector_all('p')
-                summary_parts = [await p.inner_text() for p in paragraphs[:5] if await p.inner_text()]
-                if summary_parts:
-                    summary = "\n\n".join(summary_parts)
-                    if len(paragraphs) > 5:
-                        summary += "..."
-                    break
-        return pub_time, summary
-    except Exception as e:
-        print(f"Ошибка при парсинге статьи {url}: {e}")
-        return pub_time, summary
+# --- ОТПРАВКА ОДНОЙ НОВОСТИ (БЕЗ PLAYWRIGHT) ---
 
-# --- ОТПРАВКА ОДНОЙ НОВОСТИ ---
 async def send_single_article(bot, article, pub_time: str, summary: str):
     title = article.get('title')
     url = article.get('url')
@@ -369,6 +322,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             return False
 
 # --- ПОЛУЧЕНИЕ ЭТАЛОННЫХ ВЕКТОРОВ (МНОЖЕСТВЕННЫЕ) ---
+
 def get_or_compute_topic_embeddings():
     """
     Загружает эталонные векторы из БД. Если их нет – вычисляет через YandexGPT
@@ -393,122 +347,128 @@ def get_or_compute_topic_embeddings():
             print(f"  ❌ Группа '{group}': не удалось получить вектор")
     return embeddings
 
-# --- ОСНОВНАЯ ФУНКЦИЯ ---
+# --- ОСНОВНАЯ ФУНКЦИЯ (БЕЗ PLAYWRIGHT) ---
+
 async def main():
-    # ---- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ----
+    start_time = time.time()
     init_db()
     print("✅ База данных инициализирована.")
 
     # ---- ЗАГРУЗКА ЭТАЛОННЫХ ВЕКТОРОВ ----
     topic_embeddings = get_or_compute_topic_embeddings()
-    if not topic_embeddings:
-        print("⚠️ Не удалось получить ни одного эталонного вектора. Семантический фильтр отключён.")
-        use_semantic = False
-    else:
-        use_semantic = True
+    use_semantic = bool(topic_embeddings)
+    if use_semantic:
         print(f"✅ Загружено {len(topic_embeddings)} эталонных векторов.")
+    else:
+        print("⚠️ Семантический фильтр отключён.")
 
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
     print("Бот запущен (однократный запуск для serverless).")
 
     # Уведомление о начале
     try:
-        start_message = "🔍 Начинаю поиск свежих новостей..."
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=start_message)
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="🔍 Начинаю поиск свежих новостей...")
         print("✅ Уведомление о начале поиска отправлено.")
     except Exception as e:
         print(f"⚠️ Не удалось отправить уведомление о начале: {e}")
 
-    browser = None
     try:
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+        print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
+        sent_urls = load_sent_urls()
+        sent_titles = load_sent_titles()
 
-            print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
-            sent_urls = load_sent_urls()
-            sent_titles = load_sent_titles()
+        all_news = get_news_from_rss()
+        filtered_news = filter_articles_by_keywords_and_exclusions(all_news)
 
-            all_news = get_news_from_rss()
+        if not filtered_news:
+            print("Нет новостей после фильтрации.")
+            try:
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить уведомление: {e}")
+            save_session_stats(
+                total_found=len(all_news),
+                total_filtered=0,
+                total_sent=0,
+                semantic_passed=0,
+                semantic_failed=0,
+                avg_similarity=0.0,
+                threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
+                extra_data={'sources': RSS_FEEDS[:5]}
+            )
+            return
 
-            # ---- ФИЛЬТРАЦИЯ С ИСКЛЮЧЕНИЯМИ ----
-            filtered_news = filter_articles_by_keywords_and_exclusions(all_news)
+        # ---- 1. ДЕДУПЛИКАЦИЯ (ПЕРЕД СЕМАНТИКОЙ) ----
+        new_articles = []
+        for article in filtered_news:
+            if article.get('url') not in sent_urls and article.get('title') not in sent_titles:
+                new_articles.append(article)
 
-            if not filtered_news:
-                print("Нет новостей после фильтрации.")
-                try:
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Свежих новостей по вашей теме не найдено.")
-                except Exception as e:
-                    print(f"⚠️ Не удалось отправить уведомление: {e}")
-                save_session_stats(
-                    total_found=len(all_news),
-                    total_filtered=0,
-                    total_sent=0,
-                    semantic_passed=0,
-                    semantic_failed=0,
-                    avg_similarity=0.0,
-                    threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
-                    extra_data={'sources': RSS_FEEDS[:5]}
-                )
-                return
+        if not new_articles:
+            print("Новых статей (с учётом дублей) нет.")
+            try:
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей (с учётом уже отправленных) не найдено.")
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить уведомление: {e}")
+            save_session_stats(
+                total_found=len(all_news),
+                total_filtered=len(filtered_news),
+                total_sent=0,
+                semantic_passed=0,
+                semantic_failed=0,
+                avg_similarity=0.0,
+                threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
+                extra_data={'sources': RSS_FEEDS[:5]}
+            )
+            return
 
-            # ---- ВЕКТОРНАЯ ФИЛЬТРАЦИЯ (если включена) ----
-            semantic_passed = 0
-            semantic_failed = 0
-            similarities = []
+        # ---- 2. СЕМАНТИЧЕСКАЯ ФИЛЬТРАЦИЯ (ТОЛЬКО ДЛЯ НОВЫХ СТАТЕЙ) ----
+        semantic_passed = 0
+        semantic_failed = 0
+        similarities = []
+        final_articles = []
 
-            if use_semantic:
-                print("🧠 Применяем семантическую фильтрацию (множественные эталонные векторы)...")
-                final_articles = []
-                for article in filtered_news:
-                    # Формируем текст для эмбеддинга (заголовок + описание)
-                    text = (article['title'] + ' ' + article['description'])[:500]
-                    h = simple_hash(text)
-                    emb = get_embedding(h)
-                    if emb is None:
-                        emb = get_embedding_yandex(text)
-                        if emb:
-                            save_embedding(h, emb)
-                        else:
-                            # Если не удалось получить эмбеддинг, пропускаем статью
-                            semantic_failed += 1
-                            continue
+        if use_semantic:
+            # Ограничиваем количество проверок
+            MAX_SEMANTIC_CHECKS = 30
+            articles_to_check = new_articles[:MAX_SEMANTIC_CHECKS]
+            if len(new_articles) > MAX_SEMANTIC_CHECKS:
+                print(f"⚠️ Слишком много новых статей ({len(new_articles)}), проверяем только первые {MAX_SEMANTIC_CHECKS}.")
 
-                    # Вычисляем максимальное сходство со всеми эталонными векторами
-                    max_sim = 0.0
-                    for group, topic_vec in topic_embeddings.items():
-                        sim = cosine_similarity(emb, topic_vec)
-                        if sim > max_sim:
-                            max_sim = sim
-
-                    similarities.append(max_sim)
-                    if max_sim >= SEMANTIC_THRESHOLD:
-                        final_articles.append(article)
-                        semantic_passed += 1
+            print(f"🧠 Применяем семантическую фильтрацию для {len(articles_to_check)} статей...")
+            for article in articles_to_check:
+                text = (article['title'] + ' ' + article['description'])[:500]
+                h = simple_hash(text)
+                emb = get_embedding(h)
+                if emb is None:
+                    emb = get_embedding_yandex(text)
+                    if emb:
+                        save_embedding(h, emb)
                     else:
                         semantic_failed += 1
-                        # Можно добавить логирование отклонённой статьи
-                        # print(f"  ⏭️ Отклонена: {article['title'][:50]} (max_sim={max_sim:.3f})")
-                print(f"📊 Семантика: принято {semantic_passed}, отклонено {semantic_failed}")
-                avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
-                print(f"📊 Средняя схожесть: {avg_sim:.3f}")
+                        continue
 
-                # Заменяем список отфильтрованных на прошедшие семантику
-                filtered_news = final_articles
-            else:
-                avg_sim = 0.0
+                max_sim = 0.0
+                for group, topic_vec in topic_embeddings.items():
+                    sim = cosine_similarity(emb, topic_vec)
+                    if sim > max_sim:
+                        max_sim = sim
 
-            # ---- ПРОВЕРКА НОВЫХ СТАТЕЙ (дедупликация) ----
-            new_articles = []
-            for article in filtered_news:
-                if article.get('url') not in sent_urls and article.get('title') not in sent_titles:
-                    new_articles.append(article)
+                similarities.append(max_sim)
+                if max_sim >= SEMANTIC_THRESHOLD:
+                    final_articles.append(article)
+                    semantic_passed += 1
+                else:
+                    semantic_failed += 1
 
-            if not new_articles:
-                print("Новых статей (с учётом дублей) нет.")
+            print(f"📊 Семантика: принято {semantic_passed}, отклонено {semantic_failed}")
+            avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
+            print(f"📊 Средняя схожесть: {avg_sim:.3f}")
+
+            if not final_articles:
+                print("❌ Все новые статьи отклонены семантическим фильтром.")
                 try:
-                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей (с учётом уже отправленных) не найдено.")
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Все новые статьи не прошли семантическую проверку.")
                 except Exception as e:
                     print(f"⚠️ Не удалось отправить уведомление: {e}")
                 save_session_stats(
@@ -518,92 +478,99 @@ async def main():
                     semantic_passed=semantic_passed,
                     semantic_failed=semantic_failed,
                     avg_similarity=avg_sim,
-                    threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
+                    threshold=SEMANTIC_THRESHOLD,
                     extra_data={'sources': RSS_FEEDS[:5]}
                 )
                 return
 
-            print(f"Найдено {len(new_articles)} новых статей для отправки.")
+            new_articles = final_articles
+        else:
+            avg_sim = 0.0
 
-            sent_count = 0
-            sent_titles_this_run = set()
-            sent_articles = []
+        print(f"✅ Найдено {len(new_articles)} статей для отправки после всех фильтров.")
 
-            # ---- ОТПРАВКА НОВОСТЕЙ ----
-            for article in new_articles:
-                if sent_count >= MAX_ARTICLES_TO_SEND:
-                    print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
-                    break
+        # ---- 3. ОТПРАВКА НОВОСТЕЙ (БЕЗ PLAYWRIGHT) ----
+        sent_count = 0
+        sent_titles_this_run = set()
+        sent_articles = []
 
-                title = article.get('title')
-                if title in sent_titles_this_run:
-                    print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                    save_sent_url(article.get('url'))
-                    continue
+        for article in new_articles:
+            if sent_count >= MAX_ARTICLES_TO_SEND:
+                print(f"Достигнут лимит отправки ({MAX_ARTICLES_TO_SEND}) за запуск.")
+                break
 
-                print(f"Обработка: {title}")
-                pub_time, summary = await scrape_article_details(page, article.get('url'))
+            title = article.get('title')
+            if title in sent_titles_this_run:
+                print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
+                save_sent_url(article.get('url'))
+                continue
 
-                if await send_single_article(bot, article, pub_time, summary):
-                    save_sent_url(article.get('url'))
-                    save_sent_title(title)
-                    sent_titles_this_run.add(title)
-                    sent_count += 1
-                    sent_articles.append(article)
-                    print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
-                    if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
-                        await asyncio.sleep(SEND_INTERVAL_SECONDS)
-                else:
-                    print(f"Не удалось отправить: {title}")
+            print(f"Обработка: {title}")
 
-            # ---- ИТОГОВЫЙ ОТЧЁТ ----
-            if sent_articles:
-                try:
-                    skipped = [a['title'] for a in filtered_news if a not in sent_articles]
-                    report = await generate_report(
-                        total_found=len(all_news),
-                        total_filtered=len(filtered_news),
-                        total_sent=len(sent_articles),
-                        sources_checked=RSS_FEEDS,
-                        skipped_titles=skipped[:5],
-                        errors=[]
-                    )
-                    if report:
-                        await bot.send_message(
-                            chat_id=TELEGRAM_CHAT_ID,
-                            text=f"📊 Итоговый отчёт:\n{report}",
-                            parse_mode=ParseMode.HTML
-                        )
-                        print("✅ Итоговый отчёт отправлен.")
-                except Exception as e:
-                    print(f"❌ Ошибка при генерации итогового отчёта: {e}")
+            # ---- БЕРЁМ ДАННЫЕ ИЗ RSS (без Playwright) ----
+            pub_time = article.get('publishedAt', '')
+            summary = article.get('description', '')
 
-            # ---- УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ ----
+            if await send_single_article(bot, article, pub_time, summary):
+                save_sent_url(article.get('url'))
+                save_sent_title(title)
+                sent_titles_this_run.add(title)
+                sent_count += 1
+                sent_articles.append(article)
+                print(f"Успешно отправлено ({sent_count}/{MAX_ARTICLES_TO_SEND}).")
+                if sent_count < MAX_ARTICLES_TO_SEND and sent_count < len(new_articles):
+                    await asyncio.sleep(SEND_INTERVAL_SECONDS)
+            else:
+                print(f"Не удалось отправить: {title}")
+
+        # ---- 4. ИТОГОВЫЙ ОТЧЁТ ----
+        if sent_articles:
             try:
-                stats_message = (
-                    f"✅ Поиск завершён.\n"
-                    f"📊 Статистика:\n"
-                    f"  - Найдено всего: {len(all_news)}\n"
-                    f"  - После фильтрации: {len(filtered_news)}\n"
-                    f"  - Отправлено (новых): {sent_count}\n"
-                    f"  - Семантика: принято {semantic_passed}, отклонено {semantic_failed}"
+                skipped = [a['title'] for a in new_articles if a not in sent_articles]
+                report = await generate_report(
+                    total_found=len(all_news),
+                    total_filtered=len(filtered_news),
+                    total_sent=len(sent_articles),
+                    sources_checked=RSS_FEEDS,
+                    skipped_titles=skipped[:5],
+                    errors=[]
                 )
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=stats_message)
-                print("✅ Уведомление о завершении отправлено.")
+                if report:
+                    await bot.send_message(
+                        chat_id=TELEGRAM_CHAT_ID,
+                        text=f"📊 Итоговый отчёт:\n{report}",
+                        parse_mode=ParseMode.HTML
+                    )
+                    print("✅ Итоговый отчёт отправлен.")
             except Exception as e:
-                print(f"⚠️ Не удалось отправить уведомление о завершении: {e}")
+                print(f"❌ Ошибка при генерации итогового отчёта: {e}")
 
-            # ---- СОХРАНЕНИЕ СТАТИСТИКИ В БД ----
-            save_session_stats(
-                total_found=len(all_news),
-                total_filtered=len(filtered_news),
-                total_sent=sent_count,
-                semantic_passed=semantic_passed,
-                semantic_failed=semantic_failed,
-                avg_similarity=avg_sim,
-                threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
-                extra_data={'sources': RSS_FEEDS[:5]}
+        # ---- 5. УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ ----
+        try:
+            stats_message = (
+                f"✅ Поиск завершён.\n"
+                f"📊 Статистика:\n"
+                f"  - Найдено всего: {len(all_news)}\n"
+                f"  - После фильтрации: {len(filtered_news)}\n"
+                f"  - Отправлено (новых): {sent_count}\n"
+                f"  - Семантика: принято {semantic_passed}, отклонено {semantic_failed}"
             )
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=stats_message)
+            print("✅ Уведомление о завершении отправлено.")
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить уведомление о завершении: {e}")
+
+        # ---- 6. СОХРАНЕНИЕ СТАТИСТИКИ В БД ----
+        save_session_stats(
+            total_found=len(all_news),
+            total_filtered=len(filtered_news),
+            total_sent=sent_count,
+            semantic_passed=semantic_passed,
+            semantic_failed=semantic_failed,
+            avg_similarity=avg_sim,
+            threshold=SEMANTIC_THRESHOLD if use_semantic else 0.0,
+            extra_data={'sources': RSS_FEEDS[:5]}
+        )
 
     except Exception as e:
         print(f"Критическая ошибка в main: {e}")
@@ -613,10 +580,8 @@ async def main():
         except Exception as e2:
             print(f"⚠️ Не удалось отправить уведомление об ошибке: {e2}")
     finally:
-        if browser:
-            await browser.close()
-            print("Браузер закрыт.")
-        print("--- Завершено ---")
+        elapsed = time.time() - start_time
+        print(f"--- Завершено за {elapsed:.2f} секунд ---")
 
 if __name__ == '__main__':
     asyncio.run(main())
