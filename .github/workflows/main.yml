@@ -1,66 +1,32 @@
-name: GNews Telegram Bot Cron Job
+name: News Bot
 
 on:
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 1. Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 2. Set up Python
+      - uses: actions/checkout@v4
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-
-      # ===== НОВЫЙ ШАГ: КЕШИРОВАНИЕ ЗАВИСИМОСТЕЙ =====
-      - name: 3. Cache pip packages
+          python-version: '3.11'
+      - name: Cache pip packages
         uses: actions/cache@v3
         with:
-          # Путь к папке с кешем pip
           path: ~/.cache/pip
-          # Ключ кеша: зависит от содержимого requirements.txt
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-
-      # ===== ДОПОЛНИТЕЛЬНЫЙ КЕШ ДЛЯ МОДЕЛИ SENTENCE-TRANSFORMERS (если используете) =====
-      - name: 4. Cache Hugging Face models (optional)
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/huggingface
-          key: ${{ runner.os }}-hf-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-hf-
-
-      - name: 5. Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 6. Install Playwright browsers
-        run: playwright install --with-deps
-
-      - name: 7. Run the bot script
-        run: python gnews_bot_cn.py
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-
-      - name: 8. Commit and push sent logs
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add sent_articles.txt sent_titles.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update sent articles and titles log" && git push)
+        run: python main.py
