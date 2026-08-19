@@ -131,7 +131,7 @@ def get_embedding(text: str) -> list:
         print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
         return None
 
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/embedding"
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
