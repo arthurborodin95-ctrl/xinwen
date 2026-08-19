@@ -3,31 +3,21 @@ import json
 import requests
 from datetime import datetime
 
-# --- Переменные окружения ---
 FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 API_KEY = os.getenv("YANDEX_API_KEY")
 BASE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
-# =============================================================================
-# 1. Генерация текста (YandexGPT)
-# =============================================================================
-
 def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """
-    Отправляет запрос к YandexGPT Lite (или другой модели) и возвращает ответ.
-    Используется для итогового отчёта и других текстовых задач.
+    Отправляет запрос к YandexGPT Lite и возвращает ответ.
     """
-    if not FOLDER_ID or not API_KEY:
-        print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
-        return None
-
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
     }
 
     body = {
-        "modelUri": f"gpt://{FOLDER_ID}/yandexgpt-lite",   # можно заменить на yandexgpt-pro
+        "modelUri": f"gpt://{FOLDER_ID}/yandexgpt-lite",
         "completionOptions": {
             "stream": False,
             "temperature": temperature,
@@ -50,17 +40,16 @@ def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5
         else:
             return None
     except Exception as e:
-        print(f"❌ Ошибка при запросе к YandexGPT: {e}")
+        print(f"Ошибка при запросе к YandexGPT: {e}")
         return None
 
-# =============================================================================
-# 2. Дополнительные функции (если используются в других частях проекта)
-# =============================================================================
-
 def summarize_article(title: str, content: str) -> str:
-    """Краткое резюме статьи (3–5 предложений)."""
+    """
+    Суммаризирует статью. Если контент слишком длинный, обрезает до 4000 символов.
+    """
     if len(content) > 4000:
         content = content[:4000] + "..."
+    
     prompt = f"""
 Заголовок: {title}
 
@@ -72,12 +61,17 @@ def summarize_article(title: str, content: str) -> str:
 Резюме:
 """
     summary = call_yandex_gpt(prompt, max_tokens=400, temperature=0.4)
-    return summary.strip() if summary else None
+    if summary:
+        return summary.strip()
+    return None
 
 def extract_tags(title: str, content: str) -> list:
-    """Извлекает 3–5 ключевых тегов для новости."""
+    """
+    Извлекает 3-5 ключевых тегов для новости.
+    """
     if len(content) > 2000:
         content = content[:2000] + "..."
+    
     prompt = f"""
 Заголовок: {title}
 
@@ -96,9 +90,12 @@ def extract_tags(title: str, content: str) -> list:
     return []
 
 def analyze_sentiment(title: str, content: str) -> dict:
-    """Определяет тональность новости (positive/negative/neutral) и достоверность."""
+    """
+    Определяет тональность новости: positive, negative, neutral + достоверность.
+    """
     if len(content) > 1500:
         content = content[:1500] + "..."
+    
     prompt = f"""
 Заголовок: {title}
 
@@ -121,29 +118,27 @@ def analyze_sentiment(title: str, content: str) -> dict:
             pass
     return {"sentiment": "neutral", "confidence": 0.5}
 
-# =============================================================================
-# 3. Эмбеддинги (векторное представление текста) – ИСПРАВЛЕННЫЙ URL
-# =============================================================================
+# ============================================================
+# ФУНКЦИЯ ПОЛУЧЕНИЯ ЭМБЕДДИНГА (ВЕКТОРА) ТЕКСТА
+# ============================================================
 
 def get_embedding(text: str) -> list:
     """
     Отправляет текст в YandexGPT Embeddings и возвращает вектор (список чисел).
-    Правильный URL: https://llm.api.cloud.yandex.net/embeddings
-    Документация: https://cloud.yandex.ru/docs/yandexgpt/api-ref/Embedding
+    Используется актуальный эндпоинт foundationModels/v1/embedding.
     """
     if not FOLDER_ID or not API_KEY:
         print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
         return None
 
-    # === ИСПРАВЛЕННЫЙ ЭНДПОИНТ (без /foundationModels/v1) ===
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/embedding"
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
     }
     data = {
         "modelUri": f"emb://{FOLDER_ID}/text-embedding-004",
-        "text": text[:500],  # ограничиваем длину для экономии
+        "text": text[:500],
     }
 
     try:
