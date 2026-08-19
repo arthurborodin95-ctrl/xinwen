@@ -25,7 +25,6 @@ requests
 python-telegram-bot
 python-dotenv
 feedparser
-playwright
 sentence-transformers
 scikit-learn
 numpy
