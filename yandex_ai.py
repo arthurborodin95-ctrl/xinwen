@@ -5,7 +5,7 @@ from datetime import datetime
 
 FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 API_KEY = os.getenv("YANDEX_API_KEY")
-BASE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+BASE_URL = "https://llm.api.cloud.yandex.net/embeddings"
 
 def call_yandex_gpt(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """
