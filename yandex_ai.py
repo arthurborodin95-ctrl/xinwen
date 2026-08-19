@@ -136,7 +136,7 @@ def get_embedding(text: str) -> list:
         return None
 
     # === ИСПРАВЛЕННЫЙ ЭНДПОИНТ (без /foundationModels/v1) ===
-    url = "https://llm.api.cloud.yandex.net/embeddings"
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
