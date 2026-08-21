@@ -8,14 +8,15 @@ import sys
 import hashlib
 from dotenv import load_dotenv
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
 from datetime import datetime, timezone, timedelta
 import feedparser
 
-# --- ИМПОРТЫ НОВЫХ МОДУЛЕЙ ---
-from ai_analyzer import generate_report
+# --- ИМПОРТЫ ИЗ SQLite-МОДУЛЯ ---
 from db import (
     init_db,
+    is_article_sent,
+    mark_article_sent,
+    get_total_sent,
     save_session_stats,
     get_embedding,
     save_embedding,
@@ -30,7 +31,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- ТЕМАТИЧЕСКИЕ ГРУППЫ КЛЮЧЕВЫХ СЛОВ (для множественных эталонных векторов) ---
+# --- ТЕМАТИЧЕСКИЕ ГРУППЫ КЛЮЧЕВЫХ СЛОВ ---
 TOPIC_GROUPS = {
     'trade': ['импорт', 'экспорт', 'пошлины', 'таможня', 'вэд', 'еаэс', 'бартер'],
     'logistics': ['перевозки', 'транзит', 'логистика', 'груз', 'транспорт'],
@@ -39,7 +40,7 @@ TOPIC_GROUPS = {
     'production': ['производство', 'запущено производство', 'станкостроение', 'локализация'],
 }
 
-# --- ОБЩИЙ СПИСОК КЛЮЧЕВЫХ СЛОВ (для быстрой фильтрации) ---
+# --- ОБЩИЙ СПИСОК КЛЮЧЕВЫХ СЛОВ ---
 KEYWORDS = [
     "Бартер", "Бартерная торговля", "БРИКС", "Введение в РФ", "Китай", "Китайская экономика",
     "Ввезли в Россию", "Ввоз в Россию", "Ввоз оборудования", "Виза в РФ", "Внешняя торговля",
@@ -56,7 +57,7 @@ KEYWORDS = [
     "Экспорт из Японии", "Экспорт из Китая", "Крипта", "Крипто Валюта"
 ]
 
-# --- КЛЮЧЕВЫЕ СЛОВА ИСКЛЮЧЕНИЙ (стоп-слова) ---
+# --- КЛЮЧЕВЫЕ СЛОВА ИСКЛЮЧЕНИЙ ---
 EXCLUDED_KEYWORDS = [
     "нефть", "нефтяной", "нефтепродукты",
     "газ", "газовый", "сжиженный газ", "спг",
@@ -68,22 +69,19 @@ EXCLUDED_KEYWORDS = [
 ]
 
 if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
-    print("Ошибка: не все переменные окружения заданы (токен и ID канала обязательны).")
+    print("Ошибка: не все переменные окружения заданы.")
     sys.exit(1)
 
 # --- КОНФИГУРАЦИЯ ---
 MAX_ARTICLES_TO_SEND = 30
 SEND_INTERVAL_SECONDS = 20
-SENT_ARTICLES_FILE = 'sent_articles.txt'
-SENT_TITLES_FILE = 'sent_titles.txt'
 CHANNEL_TOPIC_HEADER = "🇷🇺 Новости России"
 CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
-
-# --- ПОРОГ СЕМАНТИЧЕСКОЙ СХОЖЕСТИ ---
 SEMANTIC_THRESHOLD = 0.7
+MAX_SEMANTIC_CHECKS = 30
 
 # --- RSS ЛЕНТЫ ---
 RSS_FEEDS = [
@@ -138,7 +136,6 @@ def format_time(time_str: str) -> str:
         return time_str
 
 def simple_hash(text: str) -> str:
-    """Вычисляет MD5-хеш строки."""
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 def cosine_similarity(a, b):
@@ -150,28 +147,6 @@ def cosine_similarity(a, b):
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
-
-# --- ФУНКЦИИ РАБОТЫ С ИСТОРИЕЙ ОТПРАВЛЕННЫХ СТАТЕЙ (TXT) ---
-
-def load_sent_urls():
-    if not os.path.exists(SENT_ARTICLES_FILE):
-        return set()
-    with open(SENT_ARTICLES_FILE, 'r', encoding='utf-8') as f:
-        return set(line.strip() for line in f)
-
-def save_sent_url(article_url):
-    with open(SENT_ARTICLES_FILE, 'a', encoding='utf-8') as f:
-        f.write(article_url + '\n')
-
-def load_sent_titles():
-    if not os.path.exists(SENT_TITLES_FILE):
-        return set()
-    with open(SENT_TITLES_FILE, 'r', encoding='utf-8') as f:
-        return set(line.strip() for line in f)
-
-def save_sent_title(article_title):
-    with open(SENT_TITLES_FILE, 'a', encoding='utf-8') as f:
-        f.write(article_title + '\n')
 
 # --- ПОЛУЧЕНИЕ НОВОСТЕЙ ИЗ RSS ---
 
@@ -235,11 +210,6 @@ def get_news_from_rss():
 # --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ С ИСКЛЮЧЕНИЯМИ ---
 
 def filter_articles_by_keywords_and_exclusions(articles):
-    """
-    Фильтрует статьи:
-    1. Оставляет те, которые содержат хотя бы одно ключевое слово из KEYWORDS.
-    2. Удаляет те, которые содержат любое слово из EXCLUDED_KEYWORDS.
-    """
     if not KEYWORDS:
         return articles
 
@@ -249,12 +219,10 @@ def filter_articles_by_keywords_and_exclusions(articles):
         description = article.get("description", "")
         content = (title + " " + description).lower()
 
-        # 1. Проверка на наличие ключевых слов
         has_keyword = any(kw.lower() in content for kw in KEYWORDS)
         if not has_keyword:
             continue
 
-        # 2. Проверка на наличие слов исключений
         if EXCLUDED_KEYWORDS:
             has_excluded = any(excl.lower() in content for excl in EXCLUDED_KEYWORDS)
             if has_excluded:
@@ -265,7 +233,7 @@ def filter_articles_by_keywords_and_exclusions(articles):
     print(f"После фильтрации (ключевые слова + исключения) осталось {len(filtered)} из {len(articles)} статей.")
     return filtered
 
-# --- ОТПРАВКА ОДНОЙ НОВОСТИ (БЕЗ PLAYWRIGHT) ---
+# --- ОТПРАВКА ОДНОЙ НОВОСТИ ---
 
 async def send_single_article(bot, article, pub_time: str, summary: str):
     title = article.get('title')
@@ -321,13 +289,9 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
             return False
 
-# --- ПОЛУЧЕНИЕ ЭТАЛОННЫХ ВЕКТОРОВ (МНОЖЕСТВЕННЫЕ) ---
+# --- ПОЛУЧЕНИЕ ЭТАЛОННЫХ ВЕКТОРОВ ---
 
 def get_or_compute_topic_embeddings():
-    """
-    Загружает эталонные векторы из БД. Если их нет – вычисляет через YandexGPT
-    и сохраняет.
-    """
     stored = get_all_topic_embeddings()
     if stored:
         print(f"✅ Загружены эталонные векторы для {len(stored)} групп из БД.")
@@ -336,7 +300,6 @@ def get_or_compute_topic_embeddings():
     print("🧠 Вычисляем эталонные векторы для тематических групп...")
     embeddings = {}
     for group, words in TOPIC_GROUPS.items():
-        # Объединяем слова группы в один текст
         text = ' '.join(words)
         emb = get_embedding_yandex(text)
         if emb:
@@ -347,10 +310,12 @@ def get_or_compute_topic_embeddings():
             print(f"  ❌ Группа '{group}': не удалось получить вектор")
     return embeddings
 
-# --- ОСНОВНАЯ ФУНКЦИЯ (БЕЗ PLAYWRIGHT) ---
+# --- ОСНОВНАЯ ФУНКЦИЯ (БЕЗ PLAYWRIGHT, С SQLite) ---
 
 async def main():
     start_time = time.time()
+
+    # ---- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ----
     init_db()
     print("✅ База данных инициализирована.")
 
@@ -374,8 +339,6 @@ async def main():
 
     try:
         print(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] --- Проверка новых статей ---")
-        sent_urls = load_sent_urls()
-        sent_titles = load_sent_titles()
 
         all_news = get_news_from_rss()
         filtered_news = filter_articles_by_keywords_and_exclusions(all_news)
@@ -398,10 +361,10 @@ async def main():
             )
             return
 
-        # ---- 1. ДЕДУПЛИКАЦИЯ (ПЕРЕД СЕМАНТИКОЙ) ----
+        # ---- 1. ДЕДУПЛИКАЦИЯ (ПРОВЕРКА В SQLite) ----
         new_articles = []
         for article in filtered_news:
-            if article.get('url') not in sent_urls and article.get('title') not in sent_titles:
+            if not is_article_sent(article.get('url')):
                 new_articles.append(article)
 
         if not new_articles:
@@ -429,8 +392,6 @@ async def main():
         final_articles = []
 
         if use_semantic:
-            # Ограничиваем количество проверок
-            MAX_SEMANTIC_CHECKS = 30
             articles_to_check = new_articles[:MAX_SEMANTIC_CHECKS]
             if len(new_articles) > MAX_SEMANTIC_CHECKS:
                 print(f"⚠️ Слишком много новых статей ({len(new_articles)}), проверяем только первые {MAX_SEMANTIC_CHECKS}.")
@@ -489,7 +450,7 @@ async def main():
 
         print(f"✅ Найдено {len(new_articles)} статей для отправки после всех фильтров.")
 
-        # ---- 3. ОТПРАВКА НОВОСТЕЙ (БЕЗ PLAYWRIGHT) ----
+        # ---- 3. ОТПРАВКА НОВОСТЕЙ (С СОХРАНЕНИЕМ В SQLite) ----
         sent_count = 0
         sent_titles_this_run = set()
         sent_articles = []
@@ -502,18 +463,18 @@ async def main():
             title = article.get('title')
             if title in sent_titles_this_run:
                 print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                save_sent_url(article.get('url'))
+                # Всё равно пометим как отправленное, чтобы не проверять повторно
+                mark_article_sent(article.get('url'), title, article.get('source', {}).get('name', ''))
                 continue
 
             print(f"Обработка: {title}")
 
-            # ---- БЕРЁМ ДАННЫЕ ИЗ RSS (без Playwright) ----
             pub_time = article.get('publishedAt', '')
             summary = article.get('description', '')
 
             if await send_single_article(bot, article, pub_time, summary):
-                save_sent_url(article.get('url'))
-                save_sent_title(title)
+                # ---- СОХРАНЯЕМ В SQLite ----
+                mark_article_sent(article.get('url'), title, article.get('source', {}).get('name', ''))
                 sent_titles_this_run.add(title)
                 sent_count += 1
                 sent_articles.append(article)
@@ -527,6 +488,7 @@ async def main():
         if sent_articles:
             try:
                 skipped = [a['title'] for a in new_articles if a not in sent_articles]
+                from ai_analyzer import generate_report
                 report = await generate_report(
                     total_found=len(all_news),
                     total_filtered=len(filtered_news),
@@ -547,12 +509,14 @@ async def main():
 
         # ---- 5. УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ ----
         try:
+            total_sent = get_total_sent()
             stats_message = (
                 f"✅ Поиск завершён.\n"
                 f"📊 Статистика:\n"
                 f"  - Найдено всего: {len(all_news)}\n"
                 f"  - После фильтрации: {len(filtered_news)}\n"
                 f"  - Отправлено (новых): {sent_count}\n"
+                f"  - Всего в БД: {total_sent}\n"
                 f"  - Семантика: принято {semantic_passed}, отклонено {semantic_failed}"
             )
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=stats_message)
