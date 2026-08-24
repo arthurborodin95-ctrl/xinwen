@@ -5,6 +5,9 @@ on:
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write   # <--- разрешаем запись в репозиторий
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -18,9 +21,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ============================================================
-      # 1. Кэшируем виртуальное окружение (быстрее, чем кэш pip)
-      # ============================================================
       - name: Cache virtual environment
         id: cache-venv
         uses: actions/cache@v3
@@ -30,9 +30,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-venv-
 
-      # ============================================================
-      # 2. Устанавливаем зависимости только при промахе кэша
-      # ============================================================
       - name: Install dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
@@ -40,9 +37,6 @@ jobs:
           source venv/bin/activate
           pip install -r requirements.txt
 
-      # ============================================================
-      # 3. Запуск бота (всегда активируем venv)
-      # ============================================================
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -53,9 +47,6 @@ jobs:
           source venv/bin/activate
           python gnews_bot_cn.py
 
-      # ============================================================
-      # 4. Сохранение базы данных SQLite в репозиторий (с проверкой)
-      # ============================================================
       - name: Commit and push database
         run: |
           git config --local user.email "action@github.com"
