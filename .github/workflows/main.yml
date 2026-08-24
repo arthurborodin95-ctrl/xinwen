@@ -54,12 +54,15 @@ jobs:
           python gnews_bot_cn.py
 
       # ============================================================
-      # 4. Сохранение базы данных SQLite в репозиторий
+      # 4. Сохранение базы данных SQLite в репозиторий (с проверкой)
       # ============================================================
       - name: Commit and push database
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add news.db
-          # Коммитим только если файл изменился
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update news database" && git push)
+          if [ -f news.db ]; then
+            git add news.db
+            git diff --quiet && git diff --staged --quiet || (git commit -m "Update news database" && git push)
+          else
+            echo "⚠️ news.db not found, skipping commit"
+          fi
