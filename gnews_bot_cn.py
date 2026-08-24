@@ -82,6 +82,8 @@ GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 SEMANTIC_THRESHOLD = 0.7
 MAX_SEMANTIC_CHECKS = 30
+# --- КОНФИГУРАЦИЯ ---
+MAX_HOURS_OLD = 6  # не отправлять новости старше 6 часов
 
 # --- RSS ЛЕНТЫ ---
 RSS_FEEDS = [
