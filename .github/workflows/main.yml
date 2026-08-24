@@ -18,21 +18,48 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache pip packages
+      # ============================================================
+      # 1. Кэшируем виртуальное окружение (быстрее, чем кэш pip)
+      # ============================================================
+      - name: Cache virtual environment
+        id: cache-venv
         uses: actions/cache@v3
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          path: venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-venv-
 
+      # ============================================================
+      # 2. Устанавливаем зависимости только при промахе кэша
+      # ============================================================
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
 
+      # ============================================================
+      # 3. Запуск бота (всегда активируем venv)
+      # ============================================================
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
-        run: python gnews_bot_cn.py
+        run: |
+          source venv/bin/activate
+          python gnews_bot_cn.py
+
+      # ============================================================
+      # 4. Сохранение базы данных SQLite в репозиторий
+      # ============================================================
+      - name: Commit and push database
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add news.db
+          # Коммитим только если файл изменился
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update news database" && git push)
