@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # <--- разрешаем запись в репозиторий
+  contents: write
 
 jobs:
   run-bot:
@@ -52,6 +52,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           if [ -f news.db ]; then
+            git pull --rebase origin main
             git add news.db
             git diff --quiet && git diff --staged --quiet || (git commit -m "Update news database" && git push)
           else
