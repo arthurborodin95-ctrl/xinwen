@@ -14,10 +14,11 @@ import feedparser
 # --- ИМПОРТЫ ИЗ SQLite-МОДУЛЯ ---
 from db import (
     init_db,
-    is_article_sent,
+    is_hash_sent_today,        # Новая функция проверки по хешу
     mark_article_sent,
     get_total_sent,
     save_session_stats,
+    clear_old_entries,
     get_embedding,
     save_embedding,
     get_all_topic_embeddings,
@@ -82,7 +83,7 @@ GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
 SEMANTIC_THRESHOLD = 0.7
 MAX_SEMANTIC_CHECKS = 30
-MAX_HOURS_OLD = 24  # не отправлять новости старше 6 часов
+MAX_HOURS_OLD = 6
 
 # --- RSS ЛЕНТЫ ---
 RSS_FEEDS = [
@@ -137,6 +138,7 @@ def format_time(time_str: str) -> str:
         return time_str
 
 def simple_hash(text: str) -> str:
+    """Вычисляет MD5-хеш строки."""
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 def cosine_similarity(a, b):
@@ -148,6 +150,12 @@ def cosine_similarity(a, b):
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+# ---- НОВАЯ ФУНКЦИЯ: нормализация текста для фильтрации ----
+def normalize_text(text: str) -> str:
+    """Удаляет знаки препинания и приводит к нижнему регистру."""
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.lower()
 
 # --- ПОЛУЧЕНИЕ НОВОСТЕЙ ИЗ RSS С ФИЛЬТРОМ ПО ВРЕМЕНИ ---
 
@@ -206,7 +214,7 @@ def get_news_from_rss():
 
     all_articles.sort(key=get_date, reverse=True)
 
-    # ---- ⏱️ ФИЛЬТР ПО ВРЕМЕНИ (только свежие новости) ----
+    # ---- ФИЛЬТР ПО ВРЕМЕНИ ----
     time_limit = datetime.now(timezone.utc) - timedelta(hours=MAX_HOURS_OLD)
     filtered_by_time = []
     for article in all_articles:
@@ -218,14 +226,12 @@ def get_news_from_rss():
                 if pub_dt >= time_limit:
                     filtered_by_time.append(article)
             except:
-                # Если дата не парсится, пропускаем статью
                 pass
     all_articles = filtered_by_time
     print(f"После фильтрации по времени (последние {MAX_HOURS_OLD} ч.) осталось {len(all_articles)} статей.")
-    print(f"Всего собрано {len(all_articles)} статей из RSS (с учётом времени).")
     return all_articles
 
-# --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ С ИСКЛЮЧЕНИЯМИ ---
+# --- ФИЛЬТРАЦИЯ ПО КЛЮЧЕВЫМ СЛОВАМ С ИСКЛЮЧЕНИЯМИ (УЛУЧШЕННАЯ) ---
 
 def filter_articles_by_keywords_and_exclusions(articles):
     if not KEYWORDS:
@@ -235,7 +241,8 @@ def filter_articles_by_keywords_and_exclusions(articles):
     for article in articles:
         title = article.get("title", "")
         description = article.get("description", "")
-        content = (title + " " + description).lower()
+        raw_content = title + " " + description
+        content = normalize_text(raw_content)   # нормализуем для поиска
 
         has_keyword = any(kw.lower() in content for kw in KEYWORDS)
         if not has_keyword:
@@ -244,6 +251,8 @@ def filter_articles_by_keywords_and_exclusions(articles):
         if EXCLUDED_KEYWORDS:
             has_excluded = any(excl.lower() in content for excl in EXCLUDED_KEYWORDS)
             if has_excluded:
+                # Логируем для отладки
+                print(f"⏭️ Исключена: {title[:50]} (содержит слово исключения)")
                 continue
 
         filtered.append(article)
@@ -267,6 +276,9 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
     hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
 
     summary_text = summary if summary else article.get('description', '')
+    # Удаляем недопустимые HTML-теги (например, <p>)
+    summary_text = re.sub(r'</?p>', '', summary_text)
+
     if summary_text and title in summary_text:
         summary_text = ""
     if not summary_text:
@@ -301,7 +313,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
     except Exception as e:
         print(f"Ошибка при отправке: {e}")
         try:
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode=None, disable_web_page_preview=True)
             return True
         except Exception as fallback_e:
             print(f"Не удалось отправить даже plain текст: {fallback_e}")
@@ -328,13 +340,14 @@ def get_or_compute_topic_embeddings():
             print(f"  ❌ Группа '{group}': не удалось получить вектор")
     return embeddings
 
-# --- ОСНОВНАЯ ФУНКЦИЯ (БЕЗ PLAYWRIGHT, С SQLite) ---
+# --- ОСНОВНАЯ ФУНКЦИЯ (С ДЕДУПЛИКАЦИЕЙ ПО ХЕШУ) ---
 
 async def main():
     start_time = time.time()
 
     # ---- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ----
     init_db()
+    clear_old_entries(days=7)  # очищаем старые записи
     print("✅ База данных инициализирована.")
 
     # ---- ЗАГРУЗКА ЭТАЛОННЫХ ВЕКТОРОВ ----
@@ -379,10 +392,17 @@ async def main():
             )
             return
 
-        # ---- 1. ДЕДУПЛИКАЦИЯ (ПРОВЕРКА В SQLite) ----
+        # ---- 1. ДЕДУПЛИКАЦИЯ ПО ХЕШУ (ЗАГОЛОВОК + ОПИСАНИЕ) ----
         new_articles = []
         for article in filtered_news:
-            if not is_article_sent(article.get('url')):
+            title = article.get('title')
+            description = article.get('description', '')
+            if not title:
+                continue
+            text_for_hash = (title + ' ' + description)[:500]
+            hash_value = simple_hash(text_for_hash)
+            if not is_hash_sent_today(hash_value):
+                article['_hash'] = hash_value   # сохраняем хеш в статье
                 new_articles.append(article)
 
         if not new_articles:
@@ -468,7 +488,7 @@ async def main():
 
         print(f"✅ Найдено {len(new_articles)} статей для отправки после всех фильтров.")
 
-        # ---- 3. ОТПРАВКА НОВОСТЕЙ (С СОХРАНЕНИЕМ В SQLite) ----
+        # ---- 3. ОТПРАВКА НОВОСТЕЙ (С СОХРАНЕНИЕМ ХЕША В SQLite) ----
         sent_count = 0
         sent_titles_this_run = set()
         sent_articles = []
@@ -481,8 +501,13 @@ async def main():
             title = article.get('title')
             if title in sent_titles_this_run:
                 print(f"Дубликат заголовка в этом запуске: {title}, пропускаем.")
-                # Всё равно пометим как отправленное, чтобы не проверять повторно
-                mark_article_sent(article.get('url'), title, article.get('source', {}).get('name', ''))
+                # Сохраняем, чтобы не проверять снова (хеш уже есть)
+                mark_article_sent(
+                    article.get('url'),
+                    title,
+                    article.get('source', {}).get('name', ''),
+                    article.get('_hash', '')
+                )
                 continue
 
             print(f"Обработка: {title}")
@@ -491,8 +516,13 @@ async def main():
             summary = article.get('description', '')
 
             if await send_single_article(bot, article, pub_time, summary):
-                # ---- СОХРАНЯЕМ В SQLite ----
-                mark_article_sent(article.get('url'), title, article.get('source', {}).get('name', ''))
+                # ---- СОХРАНЯЕМ В SQLite (с хешем) ----
+                mark_article_sent(
+                    article.get('url'),
+                    title,
+                    article.get('source', {}).get('name', ''),
+                    article.get('_hash', '')
+                )
                 sent_titles_this_run.add(title)
                 sent_count += 1
                 sent_articles.append(article)
