@@ -4,27 +4,35 @@ import json
 DB_FILE = 'news.db'
 
 def init_db():
-    """Создаёт все таблицы и индексы при первом запуске."""
+    """Создаёт все таблицы и индексы при первом запуске, добавляет колонку hash если её нет."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # ---- Таблица отправленных статей (с полем hash) ----
+    # ---- Таблица отправленных статей (без hash) ----
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_articles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT UNIQUE NOT NULL,
             title TEXT NOT NULL,
             source TEXT,
-            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            hash TEXT
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # ---- Добавляем колонку hash, если её нет ----
+    try:
+        cursor.execute('ALTER TABLE sent_articles ADD COLUMN hash TEXT')
+        print("✅ Колонка 'hash' добавлена в sent_articles")
+    except sqlite3.OperationalError:
+        pass
+
+    # ---- Индексы ----
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_url ON sent_articles (url)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_title ON sent_articles (title)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_sent_at ON sent_articles (sent_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_hash ON sent_articles (hash)')
 
-    # ---- Таблица кэша эмбеддингов (если используется) ----
+    # ---- Таблица кэша эмбеддингов ----
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS article_embeddings (
             hash TEXT PRIMARY KEY,
@@ -34,7 +42,7 @@ def init_db():
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON article_embeddings (created_at)')
 
-    # ---- Таблица эталонных векторов (если используется) ----
+    # ---- Таблица эталонных векторов ----
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS topic_embeddings (
             group_name TEXT PRIMARY KEY,
@@ -64,14 +72,7 @@ def init_db():
     conn.close()
     print("✅ База данных инициализирована (с поддержкой хешей).")
 
-# ============================================================
-# ФУНКЦИИ ДЕДУПЛИКАЦИИ ПО ХЕШУ
-# ============================================================
-
 def is_hash_sent_today(hash_value: str) -> bool:
-    """
-    Проверяет, был ли уже сегодня отправлен хеш (заголовок + описание).
-    """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -83,7 +84,6 @@ def is_hash_sent_today(hash_value: str) -> bool:
     return exists
 
 def mark_article_sent(url: str, title: str, source: str = '', hash_value: str = ''):
-    """Сохраняет отправленную статью с хешем."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -94,7 +94,6 @@ def mark_article_sent(url: str, title: str, source: str = '', hash_value: str = 
     conn.close()
 
 def get_total_sent() -> int:
-    """Возвращает общее количество отправленных статей (за всё время)."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM sent_articles')
@@ -103,7 +102,6 @@ def get_total_sent() -> int:
     return count
 
 def clear_old_entries(days: int = 7):
-    """Удаляет записи старше указанного количества дней (для экономии места)."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -112,10 +110,6 @@ def clear_old_entries(days: int = 7):
     )
     conn.commit()
     conn.close()
-
-# ============================================================
-# ФУНКЦИИ ДЛЯ ЭМБЕДДИНГОВ (если используются)
-# ============================================================
 
 def get_embedding(text_hash: str):
     conn = sqlite3.connect(DB_FILE)
@@ -164,10 +158,6 @@ def clear_topic_embeddings():
     cursor.execute('DELETE FROM topic_embeddings')
     conn.commit()
     conn.close()
-
-# ============================================================
-# СТАТИСТИКА СЕССИЙ
-# ============================================================
 
 def save_session_stats(
     total_found: int,
