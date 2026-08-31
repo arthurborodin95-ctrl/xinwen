@@ -92,27 +92,33 @@ def analyze_sentiment(title: str, content: str) -> dict:
     return {"sentiment": "neutral", "confidence": 0.5}
 
 # ============================================================
-# ФУНКЦИЯ ПОЛУЧЕНИЯ ЭМБЕДДИНГА (исправленный URL)
+# ФУНКЦИЯ ПОЛУЧЕНИЯ ЭМБЕДДИНГА (адаптирована из вашего примера)
 # ============================================================
 
 def get_embedding(text: str) -> list:
+    """
+    Отправляет текст в YandexGPT Embeddings и возвращает вектор.
+    Используется актуальный эндпоинт и модель.
+    """
     if not FOLDER_ID or not API_KEY:
         print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
         return None
 
-    # Исправленный URL (без 'text' в названии)
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/embedding"
+    # Актуальный URL из примера
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
     headers = {
-        "Authorization": f"Api-Key {API_KEY}",
+        "Authorization": f"Api-Key {API_KEY}",  # используем API-ключ, а не Bearer
         "Content-Type": "application/json",
     }
-    data = {
-        "modelUri": f"emb://{FOLDER_ID}/text-embedding-004",
-        "text": text[:500],
+    # Модель: оставляем text-embedding-004 (она точно работает)
+    model_uri = f"emb://{FOLDER_ID}/text-embedding-004"
+    payload = {
+        "modelUri": model_uri,
+        "text": text[:500],  # ограничиваем длину для экономии
     }
 
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         response.raise_for_status()
         result = response.json()
         embedding = result.get("embedding")
