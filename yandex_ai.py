@@ -92,30 +92,34 @@ def analyze_sentiment(title: str, content: str) -> dict:
     return {"sentiment": "neutral", "confidence": 0.5}
 
 # ============================================================
-# ФУНКЦИЯ ПОЛУЧЕНИЯ ЭМБЕДДИНГА (адаптирована из вашего примера)
+# ФУНКЦИЯ ПОЛУЧЕНИЯ ЭМБЕДДИНГА (исправленная модель)
 # ============================================================
 
 def get_embedding(text: str) -> list:
     """
     Отправляет текст в YandexGPT Embeddings и возвращает вектор.
-    Используется актуальный эндпоинт и модель.
     """
     if not FOLDER_ID or not API_KEY:
         print("⚠️ YandexGPT не настроен (FOLDER_ID или API_KEY отсутствуют).")
         return None
 
-    # Актуальный URL из примера
+    # Используем модель text-search-query/latest (как в рабочем примере)
     url = "https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding"
     headers = {
-        "Authorization": f"Api-Key {API_KEY}",  # используем API-ключ, а не Bearer
+        "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json",
     }
-    # Модель: оставляем text-embedding-004 (она точно работает)
-    model_uri = f"emb://{FOLDER_ID}/text-embedding-004"
+    model_uri = f"emb://{FOLDER_ID}/text-search-query/latest"
     payload = {
         "modelUri": model_uri,
-        "text": text[:500],  # ограничиваем длину для экономии
+        "text": text[:500],
     }
+
+    # Отладочный вывод (можно закомментировать после проверки)
+    print(f"🔍 Отправка запроса на эмбеддинг:")
+    print(f"   URL: {url}")
+    print(f"   modelUri: {model_uri}")
+    print(f"   text: {text[:50]}...")
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -123,6 +127,7 @@ def get_embedding(text: str) -> list:
         result = response.json()
         embedding = result.get("embedding")
         if embedding:
+            print(f"   ✅ Эмбеддинг получен, размерность: {len(embedding)}")
             return embedding
         else:
             print("⚠️ В ответе не найден 'embedding'")
@@ -130,11 +135,17 @@ def get_embedding(text: str) -> list:
     except requests.exceptions.HTTPError as e:
         print(f"❌ HTTP ошибка при получении эмбеддинга: {e}")
         if response.status_code == 400:
-            print("   Проверьте правильность modelUri и текст (не должен быть пустым).")
+            print("   Причина 400: неверный modelUri или текст. Проверьте FOLDER_ID и модель.")
+            print(f"   Отправленный modelUri: {model_uri}")
         elif response.status_code == 401:
             print("   Неверный API-ключ или Folder ID.")
         elif response.status_code == 403:
             print("   Недостаточно прав для доступа к эмбеддингам.")
+        # Покажем тело ответа для диагностики
+        try:
+            print(f"   Тело ответа: {response.text}")
+        except:
+            pass
         return None
     except Exception as e:
         print(f"❌ Ошибка получения эмбеддинга: {e}")
