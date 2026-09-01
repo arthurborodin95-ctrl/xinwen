@@ -73,6 +73,7 @@ def init_db():
     print("✅ База данных инициализирована (с поддержкой хешей).")
 
 def is_hash_sent_today(hash_value: str) -> bool:
+    """Проверяет, был ли уже сегодня отправлен хеш."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -84,6 +85,7 @@ def is_hash_sent_today(hash_value: str) -> bool:
     return exists
 
 def mark_article_sent(url: str, title: str, source: str = '', hash_value: str = ''):
+    """Сохраняет отправленную статью с хешем."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
