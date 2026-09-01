@@ -10,11 +10,12 @@ from dotenv import load_dotenv
 from telegram.constants import ParseMode
 from datetime import datetime, timezone, timedelta
 import feedparser
+import sqlite3
 
 # --- ИМПОРТЫ ИЗ SQLite-МОДУЛЯ ---
 from db import (
     init_db,
-    is_hash_sent_today,        # Новая функция проверки по хешу
+    is_hash_sent_today,
     mark_article_sent,
     get_total_sent,
     save_session_stats,
@@ -81,9 +82,9 @@ CONTACT_LINK_TEXT = "Связаться"
 CONTACT_LINK_URL = "https://t.me/tl33054"
 GROUP_LINK_TEXT = "Чат"
 GROUP_LINK_URL = "https://t.me/DONG8NY"
-SEMANTIC_THRESHOLD = 0.5
+SEMANTIC_THRESHOLD = 0.55   # понизили, чтобы пропускать больше статей
 MAX_SEMANTIC_CHECKS = 30
-MAX_HOURS_OLD = 24
+MAX_HOURS_OLD = 24          # увеличили до 24 часов
 
 # --- RSS ЛЕНТЫ ---
 RSS_FEEDS = [
@@ -151,9 +152,17 @@ def cosine_similarity(a, b):
         return 0.0
     return dot / (norm_a * norm_b)
 
-# ---- НОВАЯ ФУНКЦИЯ: нормализация текста для фильтрации ----
+# ---- НОВАЯ ФУНКЦИЯ: нормализация текста для хеша ----
+def normalize_for_hash(text: str) -> str:
+    """Приводит текст к единому формату для вычисления хеша."""
+    # Удаляем знаки препинания, лишние пробелы, приводим к нижнему регистру
+    text = re.sub(r'[^\w\s]', '', text)  # удаляем всё кроме букв и пробелов
+    text = text.lower().strip()
+    text = re.sub(r'\s+', ' ', text)     # схлопываем множественные пробелы
+    return text
+
 def normalize_text(text: str) -> str:
-    """Удаляет знаки препинания и приводит к нижнему регистру."""
+    """Удаляет знаки препинания и приводит к нижнему регистру (для фильтрации)."""
     text = re.sub(r'[^\w\s]', '', text)
     return text.lower()
 
@@ -242,7 +251,7 @@ def filter_articles_by_keywords_and_exclusions(articles):
         title = article.get("title", "")
         description = article.get("description", "")
         raw_content = title + " " + description
-        content = normalize_text(raw_content)   # нормализуем для поиска
+        content = normalize_text(raw_content)
 
         has_keyword = any(kw.lower() in content for kw in KEYWORDS)
         if not has_keyword:
@@ -251,7 +260,6 @@ def filter_articles_by_keywords_and_exclusions(articles):
         if EXCLUDED_KEYWORDS:
             has_excluded = any(excl.lower() in content for excl in EXCLUDED_KEYWORDS)
             if has_excluded:
-                # Логируем для отладки
                 print(f"⏭️ Исключена: {title[:50]} (содержит слово исключения)")
                 continue
 
@@ -276,8 +284,7 @@ async def send_single_article(bot, article, pub_time: str, summary: str):
     hashtags = " ".join([f"#{word}" for word in words if word]) if words else ""
 
     summary_text = summary if summary else article.get('description', '')
-    # Удаляем недопустимые HTML-теги (например, <p>)
-    summary_text = re.sub(r'</?p>', '', summary_text)
+    summary_text = re.sub(r'</?p>', '', summary_text)  # удаляем тег <p>
 
     if summary_text and title in summary_text:
         summary_text = ""
@@ -340,7 +347,7 @@ def get_or_compute_topic_embeddings():
             print(f"  ❌ Группа '{group}': не удалось получить вектор")
     return embeddings
 
-# --- ОСНОВНАЯ ФУНКЦИЯ (С ДЕДУПЛИКАЦИЕЙ ПО ХЕШУ) ---
+# --- ОСНОВНАЯ ФУНКЦИЯ (С УЛУЧШЕННОЙ ДЕДУПЛИКАЦИЕЙ) ---
 
 async def main():
     start_time = time.time()
@@ -348,6 +355,15 @@ async def main():
     # ---- ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ----
     init_db()
     clear_old_entries(days=7)  # очищаем старые записи
+
+    # ---- ОТЛАДОЧНЫЙ ВЫВОД ----
+    conn = sqlite3.connect('news.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM sent_articles')
+    count = cursor.fetchone()[0]
+    print(f"📊 Всего записей в БД: {count}")
+    conn.close()
+
     print("✅ База данных инициализирована.")
 
     # ---- ЗАГРУЗКА ЭТАЛОННЫХ ВЕКТОРОВ ----
@@ -392,17 +408,26 @@ async def main():
             )
             return
 
-        # ---- 1. ДЕДУПЛИКАЦИЯ ПО ХЕШУ (ЗАГОЛОВОК + ОПИСАНИЕ) ----
+        # ---- 1. ДЕДУПЛИКАЦИЯ ПО НОРМАЛИЗОВАННОМУ ХЕШУ ----
         new_articles = []
         for article in filtered_news:
             title = article.get('title')
             description = article.get('description', '')
             if not title:
                 continue
-            text_for_hash = (title + ' ' + description)[:500]
-            hash_value = simple_hash(text_for_hash)
-            if not is_hash_sent_today(hash_value):
-                article['_hash'] = hash_value   # сохраняем хеш в статье
+
+            # Нормализуем текст для хеша
+            raw_text = (title + ' ' + description)[:500]
+            normalized_text = normalize_for_hash(raw_text)
+            hash_value = simple_hash(normalized_text)
+            article['_hash'] = hash_value
+
+            # Отладочный вывод
+            print(f"🔍 Проверка хеша: {hash_value[:6]} для '{title[:30]}...'")
+            if is_hash_sent_today(hash_value):
+                print("   ⏭️ Пропускаем (уже отправлено сегодня)")
+            else:
+                print("   ✅ Новая статья")
                 new_articles.append(article)
 
         if not new_articles:
@@ -488,7 +513,7 @@ async def main():
 
         print(f"✅ Найдено {len(new_articles)} статей для отправки после всех фильтров.")
 
-        # ---- 3. ОТПРАВКА НОВОСТЕЙ (С СОХРАНЕНИЕМ ХЕША В SQLite) ----
+        # ---- 3. ОТПРАВКА НОВОСТЕЙ (С СОХРАНЕНИЕМ ХЕША) ----
         sent_count = 0
         sent_titles_this_run = set()
         sent_articles = []
@@ -537,10 +562,19 @@ async def main():
             try:
                 skipped = [a['title'] for a in new_articles if a not in sent_articles]
                 from ai_analyzer import generate_report
+
+                semantic_stats = {
+                    'threshold': SEMANTIC_THRESHOLD if use_semantic else None,
+                    'passed': semantic_passed,
+                    'failed': semantic_failed,
+                    'avg_similarity': avg_sim,
+                }
+
                 report = await generate_report(
                     total_found=len(all_news),
                     total_filtered=len(filtered_news),
                     total_sent=len(sent_articles),
+                    semantic_stats=semantic_stats,
                     sources_checked=RSS_FEEDS,
                     skipped_titles=skipped[:5],
                     errors=[]
