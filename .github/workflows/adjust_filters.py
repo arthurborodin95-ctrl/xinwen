@@ -1,24 +1,14 @@
-#!/usr/bin/env python3
-"""
-Скрипт для адаптивной настройки фильтров бота на основе обратной связи пользователей.
-Запускается по cron (например, раз в сутки).
-"""
 import os
 import sys
 import json
 import logging
+import re
 from collections import Counter
-from datetime import datetime, timedelta
-
 from dotenv import load_dotenv
 load_dotenv()
 
-# Импорты из проекта
 from db import (
     init_db,
-    init_config_table,
-    get_config,
-    set_config,
     get_keywords,
     set_keywords,
     get_excluded_keywords,
@@ -26,88 +16,61 @@ from db import (
     get_semantic_threshold,
     set_semantic_threshold,
     get_recent_feedback_stats,
+    get_feedback_texts
 )
-from news_fetcher import fetch_gnews
-import re
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Вспомогательные функции ---
-
-def normalize_word(word: str) -> str:
-    """Приводит слово к нижнему регистру, убирает знаки препинания."""
-    word = re.sub(r'[^\w]', '', word).lower()
-    return word
-
-def get_word_frequencies(texts: list, min_len=3) -> Counter:
-    """
-    Из списка текстов извлекает частоту слов.
-    Убирает стоп-слова (можно расширить список).
-    """
-    stopwords = {'и', 'в', 'на', 'с', 'по', 'для', 'из', 'что', 'как', 'это', 'не', 'или', 'их', 'все', 'так', 'уже'}
-    counter = Counter()
-    for text in texts:
-        words = re.findall(r'\b\w+\b', text.lower())
-        for word in words:
-            if len(word) >= min_len and word not in stopwords:
-                counter[word] += 1
-    return counter
-
-# --- Основная логика адаптации ---
-
 def adjust_filters():
-    logger.info("Начинаем адаптацию фильтров на основе отзывов...")
-
-    # 1. Получаем статистику отзывов
+    init_db()
+    logger.info("Начинаем адаптацию фильтров...")
     avg_rating, count = get_recent_feedback_stats(days=7)
-    logger.info(f"За последние 7 дней получено {count} оценок, средний рейтинг: {avg_rating:.2f}")
-
-    # Если отзывов мало – не меняем настройки
+    logger.info(f"Оценок за 7 дней: {count}, средняя: {avg_rating:.2f}")
     if count < 10:
-        logger.info("Недостаточно отзывов для корректировки (нужно >= 10). Пропускаем.")
+        logger.info("Недостаточно отзывов. Пропускаем.")
         return
 
-    # 2. Корректировка порога семантической схожести
-    current_threshold = get_semantic_threshold()
-    new_threshold = current_threshold
-
-    # Если пользователи в среднем ставят низкие оценки, значит фильтр слишком строгий → понижаем порог (пропускаем больше)
-    # Если высокие – значит качество хорошее, можно повысить порог (оставляем только самое релевантное)
+    # Корректировка порога
+    current = get_semantic_threshold()
     if avg_rating < 3.0:
-        new_threshold = max(0.4, current_threshold - 0.05)
-        logger.info(f"Средний рейтинг низкий ({avg_rating:.2f}), понижаем порог до {new_threshold:.2f}")
+        new = max(0.4, current - 0.05)
+        set_semantic_threshold(new)
+        logger.info(f"Порог понижен до {new:.2f}")
     elif avg_rating > 4.0:
-        new_threshold = min(0.9, current_threshold + 0.05)
-        logger.info(f"Средний рейтинг высокий ({avg_rating:.2f}), повышаем порог до {new_threshold:.2f}")
-    else:
-        logger.info(f"Средний рейтинг в норме, порог не меняем ({current_threshold:.2f})")
+        new = min(0.9, current + 0.05)
+        set_semantic_threshold(new)
+        logger.info(f"Порог повышен до {new:.2f}")
 
-    if new_threshold != current_threshold:
-        set_semantic_threshold(new_threshold)
+    # Анализ слов
+    good, bad = get_feedback_texts(days=7)
+    if good or bad:
+        good_words = Counter()
+        for text in good:
+            for word in re.findall(r'\b\w{3,}\b', text.lower()):
+                good_words[word] += 1
+        bad_words = Counter()
+        for text in bad:
+            for word in re.findall(r'\b\w{3,}\b', text.lower()):
+                bad_words[word] += 1
 
-    # 3. Анализ ключевых слов и исключений
-    # Получаем тексты новостей, которые пользователи оценили как полезные (rating > 0) и бесполезные (rating < 0)
-    # Для этого нужно получить данные из БД (можно добавить функцию get_feedback_texts() в db.py)
-    # Для примера используем заглушку: если у нас нет реальных данных, мы не будем менять слова.
-    # В реальном проекте нужно добавить в db.py функцию, которая возвращает тексты с рейтингом.
-    # Пока просто логируем, что можно было бы сделать.
-    logger.info("Анализ ключевых слов и исключений пока не реализован, требуется расширение db.py.")
-    # В будущем можно реализовать:
-    # good_texts, bad_texts = get_feedback_texts()
-    # good_words = get_word_frequencies(good_texts)
-    # bad_words = get_word_frequencies(bad_texts)
-    # и т.д.
+        # Добавляем часто встречающиеся в полезных новостях слова
+        current_keywords = set(get_keywords())
+        new_keywords = set(current_keywords)
+        for word, count in good_words.most_common(5):
+            if count >= 3 and word not in current_keywords:
+                new_keywords.add(word)
+        set_keywords(list(new_keywords))
+        logger.info(f"Ключевые слова обновлены: {len(new_keywords)} слов")
 
-    logger.info("Адаптация завершена.")
+        # Добавляем в исключения слова из негативных отзывов
+        current_excluded = set(get_excluded_keywords())
+        new_excluded = set(current_excluded)
+        for word, count in bad_words.most_common(3):
+            if count >= 2 and word not in current_excluded:
+                new_excluded.add(word)
+        set_excluded_keywords(list(new_excluded))
+        logger.info(f"Список исключений обновлён: {len(new_excluded)} слов")
 
 if __name__ == '__main__':
-    # Инициализация БД и таблицы конфигурации
-    init_db()
-    init_config_table()
     adjust_filters()
