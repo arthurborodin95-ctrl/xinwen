@@ -8,7 +8,7 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    # ---- Таблица отправленных статей (без hash) ----
+    # ---- Таблица отправленных статей ----
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sent_articles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,9 +24,10 @@ def init_db():
         cursor.execute('ALTER TABLE sent_articles ADD COLUMN hash TEXT')
         print("✅ Колонка 'hash' добавлена в sent_articles")
     except sqlite3.OperationalError:
+        # Колонка уже существует – просто игнорируем
         pass
 
-    # ---- Индексы ----
+    # ---- Индексы для sent_articles ----
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_url ON sent_articles (url)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_title ON sent_articles (title)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_sent_at ON sent_articles (sent_at)')
@@ -68,9 +69,25 @@ def init_db():
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON session_stats (timestamp)')
 
+    # ---- Таблица обратной связи (для обучения) ----
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            response_text TEXT,
+            rating INTEGER,   -- 1 = like, -1 = dislike
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
-    print("✅ База данных инициализирована (с поддержкой хешей).")
+    print("✅ База данных инициализирована (все таблицы созданы).")
+
+
+# ============================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ОТПРАВЛЕННЫМИ СТАТЬЯМИ
+# ============================================================
 
 def is_hash_sent_today(hash_value: str) -> bool:
     """Проверяет, был ли уже сегодня отправлен хеш."""
@@ -96,6 +113,7 @@ def mark_article_sent(url: str, title: str, source: str = '', hash_value: str = 
     conn.close()
 
 def get_total_sent() -> int:
+    """Возвращает общее количество отправленных статей."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM sent_articles')
@@ -104,6 +122,7 @@ def get_total_sent() -> int:
     return count
 
 def clear_old_entries(days: int = 7):
+    """Удаляет записи старше указанного количества дней."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -113,7 +132,13 @@ def clear_old_entries(days: int = 7):
     conn.commit()
     conn.close()
 
+
+# ============================================================
+# ФУНКЦИИ ДЛЯ ЭМБЕДДИНГОВ
+# ============================================================
+
 def get_embedding(text_hash: str):
+    """Загружает эмбеддинг из кэша по хешу."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT embedding FROM article_embeddings WHERE hash = ?', (text_hash,))
@@ -124,6 +149,7 @@ def get_embedding(text_hash: str):
     return None
 
 def save_embedding(text_hash: str, embedding: list):
+    """Сохраняет эмбеддинг в кэш."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -133,7 +159,13 @@ def save_embedding(text_hash: str, embedding: list):
     conn.commit()
     conn.close()
 
+
+# ============================================================
+# ФУНКЦИИ ДЛЯ ЭТАЛОННЫХ ВЕКТОРОВ
+# ============================================================
+
 def get_all_topic_embeddings():
+    """Возвращает все сохранённые эталонные векторы (словарь group_name -> embedding)."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT group_name, embedding FROM topic_embeddings')
@@ -145,6 +177,7 @@ def get_all_topic_embeddings():
     return result
 
 def save_topic_embedding(group_name: str, embedding: list):
+    """Сохраняет эталонный вектор для группы."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -155,11 +188,17 @@ def save_topic_embedding(group_name: str, embedding: list):
     conn.close()
 
 def clear_topic_embeddings():
+    """Удаляет все эталонные векторы."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM topic_embeddings')
     conn.commit()
     conn.close()
+
+
+# ============================================================
+# СТАТИСТИКА СЕССИЙ
+# ============================================================
 
 def save_session_stats(
     total_found: int,
@@ -171,6 +210,7 @@ def save_session_stats(
     threshold: float,
     extra_data: dict = None
 ):
+    """Сохраняет статистику сессии в БД."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
@@ -194,3 +234,35 @@ def save_session_stats(
     )
     conn.commit()
     conn.close()
+
+
+# ============================================================
+# ОБРАТНАЯ СВЯЗЬ (ДЛЯ ОБУЧЕНИЯ)
+# ============================================================
+
+def save_feedback(user_id: int, response_text: str, rating: int):
+    """Сохраняет оценку пользователя в таблицу user_feedback."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO user_feedback (user_id, response_text, rating) VALUES (?, ?, ?)',
+        (user_id, response_text[:500], rating)
+    )
+    conn.commit()
+    conn.close()
+
+def get_recent_feedback_stats(days: int = 7):
+    """
+    Возвращает среднюю оценку и количество оценок за последние N дней.
+    Используется для самообучения.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT AVG(rating), COUNT(rating)
+        FROM user_feedback
+        WHERE created_at > datetime('now', ?)
+    ''', (f'-{days} days',))
+    avg_rating, count = cursor.fetchone()
+    conn.close()
+    return avg_rating or 0.0, count or 0
