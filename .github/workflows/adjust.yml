@@ -1,0 +1,31 @@
+name: Adjust Filters
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  adjust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run adjustment
+        env:
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+          YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
+        run: python adjust_filters.py
+      - name: Commit config changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add news.db
+          git commit -m "Auto-adjust filters" || echo "No changes"
+          git pull --rebase origin main
+          git push
