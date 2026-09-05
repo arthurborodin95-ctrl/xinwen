@@ -80,6 +80,25 @@ def init_db():
         )
     ''')
 
+    # ---- Таблица конфигурации (динамические настройки) ----
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    # Заполняем значениями по умолчанию (если ещё не заданы)
+    defaults = [
+        ('keywords', '["Бартер","БРИКС","Китай","Импорт","Санкции","Экономика","ВЭД","ЕАЭС","Логистика","Таможня","Пошлины","Транзит","Параллельный импорт"]'),
+        ('excluded_keywords', '["нефть","газ","алюминий","сырьё","металл","добыча","уголь"]'),
+        ('semantic_threshold', '0.55'),
+        ('max_articles_to_send', '30'),
+        ('max_hours_old', '24'),
+    ]
+    for key, value in defaults:
+        cursor.execute('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)', (key, value))
+
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована (все таблицы созданы).")
@@ -266,3 +285,83 @@ def get_recent_feedback_stats(days: int = 7):
     avg_rating, count = cursor.fetchone()
     conn.close()
     return avg_rating or 0.0, count or 0
+
+def get_feedback_texts(days: int = 7):
+    """
+    Возвращает два списка: тексты с положительным рейтингом и с отрицательным.
+    Используется для анализа слов в adjust_filters.py.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT response_text, rating
+        FROM user_feedback
+        WHERE created_at > datetime('now', ?)
+        AND rating != 0
+    ''', (f'-{days} days',))
+    rows = cursor.fetchall()
+    conn.close()
+    good = [row[0] for row in rows if row[1] > 0]
+    bad = [row[0] for row in rows if row[1] < 0]
+    return good, bad
+
+
+# ============================================================
+# КОНФИГУРАЦИЯ (ДИНАМИЧЕСКИЕ НАСТРОЙКИ)
+# ============================================================
+
+def get_config(key: str, default=None):
+    """Возвращает значение настройки из таблицы config."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT value FROM config WHERE key = ?', (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row[0]
+    return default
+
+def set_config(key: str, value):
+    """Сохраняет значение настройки в таблицу config."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('REPLACE INTO config (key, value) VALUES (?, ?)', (key, value))
+    conn.commit()
+    conn.close()
+
+# Удобные обёртки для конкретных настроек
+def get_keywords():
+    """Возвращает список ключевых слов."""
+    val = get_config('keywords', '[]')
+    return json.loads(val)
+
+def set_keywords(keywords: list):
+    set_config('keywords', json.dumps(keywords, ensure_ascii=False))
+
+def get_excluded_keywords():
+    val = get_config('excluded_keywords', '[]')
+    return json.loads(val)
+
+def set_excluded_keywords(keywords: list):
+    set_config('excluded_keywords', json.dumps(keywords, ensure_ascii=False))
+
+def get_semantic_threshold():
+    val = get_config('semantic_threshold', '0.55')
+    return float(val)
+
+def set_semantic_threshold(threshold: float):
+    set_config('semantic_threshold', str(threshold))
+
+def get_max_articles_to_send():
+    val = get_config('max_articles_to_send', '30')
+    return int(val)
+
+def set_max_articles_to_send(value: int):
+    set_config('max_articles_to_send', str(value))
+
+def get_max_hours_old():
+    val = get_config('max_hours_old', '24')
+    return int(val)
+
+def set_max_hours_old(value: int):
+    set_config('max_hours_old', str(value))
