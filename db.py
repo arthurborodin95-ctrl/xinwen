@@ -24,7 +24,6 @@ def init_db():
         cursor.execute('ALTER TABLE sent_articles ADD COLUMN hash TEXT')
         print("✅ Колонка 'hash' добавлена в sent_articles")
     except sqlite3.OperationalError:
-        # Колонка уже существует – просто игнорируем
         pass
 
     # ---- Индексы для sent_articles ----
@@ -331,7 +330,6 @@ def set_config(key: str, value):
 
 # Удобные обёртки для конкретных настроек
 def get_keywords():
-    """Возвращает список ключевых слов."""
     val = get_config('keywords', '[]')
     return json.loads(val)
 
