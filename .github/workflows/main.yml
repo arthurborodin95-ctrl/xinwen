@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write   # обязательно для push
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -43,19 +44,24 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_API_KEY: ${{ secrets.YANDEX_API_KEY }}
+          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
         run: |
           source venv/bin/activate
-          python gnews_bot_cn.py
+          python main.py
 
+      # ---- УПРОЩЁННЫЙ ШАГ КОММИТА БЕЗ PULL ----
       - name: Commit and push database
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           if [ -f news.db ]; then
             git add news.db
-            git commit -m "Update news database" || echo "No changes to commit"
-            git pull --rebase origin main
-            git push
+            if git diff --staged --quiet; then
+              echo "✅ База данных не изменилась, коммит не требуется."
+            else
+              git commit -m "Update news database"
+              git push
+            fi
           else
-            echo "⚠️ news.db not found, skipping commit"
+            echo "⚠️ news.db не найден, пропускаем коммит."
           fi
