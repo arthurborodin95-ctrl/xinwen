@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import telegram
 import feedparser
 
+# --- ИМПОРТЫ ИЗ МОДУЛЕЙ ---
 from db import (
     init_db,
     is_hash_sent_today,
@@ -44,6 +45,11 @@ SEMANTIC_THRESHOLD = get_semantic_threshold()
 MAX_ARTICLES_TO_SEND = get_max_articles_to_send()
 MAX_HOURS_OLD = get_max_hours_old()
 
+# ---- ID пользователей для отправки (можно расширить) ----
+# Если хотите отправлять нескольким пользователям, добавьте их ID в список
+# CHAT_IDS = [int(TELEGRAM_CHAT_ID), 987654321]  # раскомментируйте и добавьте
+CHAT_IDS = [int(TELEGRAM_CHAT_ID)]  # пока только один
+
 # ---- RSS ЛЕНТЫ ----
 RSS_FEEDS = [
     "https://ria.ru/export/rss2/index.xml",
@@ -77,6 +83,18 @@ def cosine_similarity(a, b):
     norm_b = sum(y*y for y in b)**0.5
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
+def format_time(pub_date_str: str) -> str:
+    """Преобразует ISO-дату в читаемый формат (Москва)."""
+    if not pub_date_str:
+        return "неизвестно"
+    try:
+        dt = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00'))
+        msk_tz = timezone(timedelta(hours=3))
+        dt_msk = dt.astimezone(msk_tz)
+        return dt_msk.strftime('%d.%m.%Y %H:%M')
+    except Exception:
+        return pub_date_str
+
 # ---- ПОЛУЧЕНИЕ НОВОСТЕЙ ИЗ RSS ----
 def get_news_from_rss():
     all_articles = []
@@ -90,6 +108,7 @@ def get_news_from_rss():
                 if entry.link in seen_urls:
                     continue
                 seen_urls.add(entry.link)
+
                 pub_date_iso = None
                 if entry.get('published_parsed'):
                     dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
@@ -98,6 +117,7 @@ def get_news_from_rss():
                     pub_date_iso = entry.published
                 else:
                     pub_date_iso = datetime.now(timezone.utc).isoformat()
+
                 description = entry.get('summary', '') or entry.get('description', '')
                 image_url = None
                 if 'media_content' in entry and entry.media_content:
@@ -107,7 +127,9 @@ def get_news_from_rss():
                         if link.get('type', '').startswith('image'):
                             image_url = link.get('href')
                             break
+
                 source_name = feed.feed.get('title', 'Неизвестный источник')
+
                 all_articles.append({
                     'title': entry.title,
                     'url': entry.link,
@@ -118,7 +140,14 @@ def get_news_from_rss():
                 })
         except Exception as e:
             print(f"Ошибка RSS {feed_url}: {e}")
-    all_articles.sort(key=lambda a: datetime.fromisoformat(a.get('publishedAt', '').replace('Z', '+00:00')) if a.get('publishedAt') else datetime.min, reverse=True)
+
+    # Сортировка по дате (новые сверху)
+    def get_date(a):
+        try:
+            return datetime.fromisoformat(a['publishedAt'].replace('Z', '+00:00'))
+        except:
+            return datetime.min
+    all_articles.sort(key=get_date, reverse=True)
     return all_articles
 
 # ---- ОСНОВНАЯ ФУНКЦИЯ ----
@@ -135,12 +164,16 @@ async def main():
         print("⚠️ Семантический фильтр отключён (нет векторов).")
 
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-    try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="🔍 Начинаю поиск свежих новостей...")
-    except Exception as e:
-        print(f"⚠️ Уведомление не отправлено: {e}")
+
+    # Уведомление о начале (отправляем всем пользователям)
+    for chat_id in CHAT_IDS:
+        try:
+            await bot.send_message(chat_id=chat_id, text="🔍 Начинаю поиск свежих новостей...")
+        except Exception as e:
+            print(f"⚠️ Уведомление для {chat_id} не отправлено: {e}")
 
     all_news = get_news_from_rss()
+
     # Фильтр по времени
     time_limit = datetime.now(timezone.utc) - timedelta(hours=MAX_HOURS_OLD)
     filtered_by_time = []
@@ -165,7 +198,11 @@ async def main():
     print(f"После фильтрации слов осталось {len(filtered)} статей.")
 
     if not filtered:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новостей не найдено.")
+        for chat_id in CHAT_IDS:
+            try:
+                await bot.send_message(chat_id=chat_id, text="📭 Новостей не найдено.")
+            except Exception as e:
+                print(f"⚠️ Уведомление для {chat_id} не отправлено: {e}")
         return
 
     # Дедупликация по хешу
@@ -179,7 +216,11 @@ async def main():
     print(f"Новых статей: {len(new_articles)}")
 
     if not new_articles:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей нет (все уже были сегодня).")
+        for chat_id in CHAT_IDS:
+            try:
+                await bot.send_message(chat_id=chat_id, text="📭 Новых статей нет (все уже были сегодня).")
+            except Exception as e:
+                print(f"⚠️ Уведомление для {chat_id} не отправлено: {e}")
         return
 
     # Семантическая фильтрация (если включена)
@@ -209,19 +250,37 @@ async def main():
         new_articles = final_articles
         print(f"Семантика: принято {semantic_passed}, отклонено {semantic_failed}")
         if not new_articles:
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Все новости отклонены семантикой.")
+            for chat_id in CHAT_IDS:
+                try:
+                    await bot.send_message(chat_id=chat_id, text="📭 Все новости отклонены семантикой.")
+                except Exception as e:
+                    print(f"⚠️ Уведомление для {chat_id} не отправлено: {e}")
             return
 
-    # Отправка
+    # Отправка новостей
     sent_count = 0
     for a in new_articles[:MAX_ARTICLES_TO_SEND]:
-        caption = f"<b>{a['title']}</b>\n\n{a['description'][:500]}\n\n🔗 <a href='{a['url']}'>Читать полностью</a>"
-        try:
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=caption, parse_mode='HTML', disable_web_page_preview=True)
-            mark_article_sent(a['url'], a['title'], a['source'].get('name', ''), a.get('_hash', ''))
-            sent_count += 1
-        except Exception as e:
-            print(f"Ошибка отправки: {e}")
+        source = a.get('source', {}).get('name', 'Неизвестный источник')
+        pub_time = format_time(a.get('publishedAt', ''))
+
+        # Формируем сообщение с источником и временем
+        caption = (
+            f"<b>{a['title']}</b>\n\n"
+            f"{a['description'][:500]}\n\n"
+            f"📰 Источник: {source}\n"
+            f"🕒 {pub_time}\n\n"
+            f"🔗 <a href='{a['url']}'>Читать полностью</a>"
+        )
+
+        for chat_id in CHAT_IDS:
+            try:
+                await bot.send_message(chat_id=chat_id, text=caption, parse_mode='HTML', disable_web_page_preview=True)
+                # Сохраняем хеш только один раз (неважно, для какого чата)
+                if chat_id == CHAT_IDS[0]:
+                    mark_article_sent(a['url'], a['title'], source, a.get('_hash', ''))
+            except Exception as e:
+                print(f"Ошибка отправки для {chat_id}: {e}")
+        sent_count += 1
 
     avg_sim = sum(similarities)/len(similarities) if similarities else 0.0
     save_session_stats(
@@ -233,7 +292,13 @@ async def main():
         avg_similarity=avg_sim,
         threshold=SEMANTIC_THRESHOLD
     )
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=f"✅ Отправлено {sent_count} новостей.")
+
+    # Уведомление о завершении
+    for chat_id in CHAT_IDS:
+        try:
+            await bot.send_message(chat_id=chat_id, text=f"✅ Отправлено {sent_count} новостей.")
+        except Exception as e:
+            print(f"⚠️ Уведомление для {chat_id} не отправлено: {e}")
 
 if __name__ == '__main__':
     asyncio.run(main())
