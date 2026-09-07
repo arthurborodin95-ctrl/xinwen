@@ -46,59 +46,38 @@ MAX_HOURS_OLD = get_max_hours_old()
 
 # ---- RSS ЛЕНТЫ (сокращённый список для скорости) ----
 RSS_FEEDS = [
-    # ===== Основные СМИ =====
-    "https://ria.ru/export/rss2/index.xml",              # РИА Новости
-    "https://tass.ru/rss/v2.xml",                        # ТАСС
-    "https://www.interfax.ru/rss.asp",                   # Интерфакс
-    "https://www.finmarket.ru/export/rss.asp",           # Финмаркет
-    "https://www.kommersant.ru/RSS/news.xml",            # Коммерсантъ
-    "https://www.vedomosti.ru/rss",                      # Ведомости
-    "https://1prime.ru/export/rss.xml",                  # Прайм
-    "https://www.forbes.ru/rss/all",                     # Forbes Russia
-    "https://iz.ru/xml/rss/all.xml",                     # Известия
-    "https://www.rbc.ru/rss/",                           # РБК
-    "https://lenta.ru/rss",                              # Lenta.ru
-    "https://www.gazeta.ru/export/rss/first.xml",        # Газета.ru
-    "https://expert.ru/rss/",                            # Эксперт
-    "https://www.fin-gazeta.ru/rss/",                    # Финансовая газета
-    "https://www.vestifinance.ru/rss",                   # Вести Финанс
-    "https://rg.ru/rss/",                                # Российская газета
-    "https://www.pnp.ru/rss/",                           # Парламентская газета
-
-    # ===== Специализированные (экономика, ВЭД, логистика) =====
-    "https://www.tks.ru/law.rss",                        # TKS.ru (законодательство)
-    "https://www.tks.ru/nearby.rss",                     # TKS.ru (смежные темы)
-    "https://trans.ru/rss/news",                         # Trans.ru (логистика)
-    "https://www.infranews.ru/feed/",                    # Infranews
-    "https://www.tourdom.ru/rss/",                       # Tourdom (туризм)
-    "https://www.autostat.ru/export/rss/",               # Автостат
-    "https://morvesti.ru/rss/",                          # Морские вести
-    "https://portnews.ru/rss/",                          # Portnews
-    "https://seanews.ru/feed/",                          # Seanews
-    "https://primpress.ru/rss/",                         # Primpress
-    "https://www.cnews.ru/news/rss",                     # CNews
-    "https://www.comnews.ru/rss",                        # ComNews
-    "https://www.ixbt.com/export/news.rss",              # IXBT (технологии)
-    "https://biang.ru/rss/",                             # Biang.ru
-    "https://www.eastrussia.ru/feed/",                   # EastRussia
-    "https://bigasia.ru/feed/",                          # BigAsia
-    "https://tvbrics.com/feed/",                         # TV BRICS
-    "https://infobrics.org/rss/",                        # BRICS Business
-    "https://eec.eaeunion.org/rss/",                     # ЕАЭС / ЕЭК
-
-    # ===== Китай и Азия =====
-    "http://russian.news.cn/rss/news.xml",               # Синьхуа (русская версия)
-    "http://russian.china.org.cn/rss/feed.xml",          # Китайский инфоцентр
-    "http://russian.people.com.cn/rss/feed.xml",         # People's Daily
-    "https://russian.china.org.cn/rss/business.xml",     # Китайский бизнес
-    "https://www.scmp.com/rss/",                         # South China Morning Post
-    "https://rsshub.app/cnbc/rss/",                      # CNBC (через RSSHub)
-
-    # ===== Логистика и промышленность =====
-    "https://www.logistics.ru/rss",                      # Логистика
-    "https://www.rzd-partner.ru/rss/",                   # РЖД-Партнёр
-    "https://www.stanok.info/rss/",                      # Станкостроение
-    "https://www.roprom.ru/rss/",                        # Российская промышленность
+    "https://ria.ru/export/rss2/index.xml",
+    "https://tass.ru/rss/v2.xml",
+    "https://www.interfax.ru/rss.asp",
+    "https://www.finmarket.ru/export/rss.asp",
+    "https://www.kommersant.ru/RSS/news.xml",
+    "https://www.vedomosti.ru/rss",
+    "https://1prime.ru/export/rss.xml",
+    "https://www.forbes.ru/rss/all",
+    "https://iz.ru/xml/rss/all.xml",
+    "https://www.tks.ru/law.rss",
+    "https://www.tks.ru/nearby.rss",
+    "https://trans.ru/rss/news",
+    "https://www.infranews.ru/feed/",
+    "https://www.tourdom.ru/rss/",
+    "https://www.autostat.ru/export/rss/",
+    "https://morvesti.ru/rss/",
+    "https://portnews.ru/rss/",
+    "https://seanews.ru/feed/",
+    "https://primpress.ru/rss/",
+    "https://www.cnews.ru/news/rss",
+    "https://www.comnews.ru/rss",
+    "http://www.cbr.ru/rss/RssNews",
+    "http://www.cbr.ru/rss/RssPress",
+    "https://biang.ru/rss/",
+    "http://russian.news.cn/rss/news.xml",
+    "https://www.eastrussia.ru/feed/",
+    "https://bigasia.ru/feed/",
+    "http://russian.china.org.cn/rss/feed.xml",
+    "http://russian.people.com.cn/rss/feed.xml",
+    "https://rsshub.app/cnbc/rss/",
+    "https://www.scmp.com/rss/",
+    "https://tvbrics.com/feed/"
 ]
 MAX_ARTICLES_PER_FEED = 20
 
@@ -119,17 +98,32 @@ def cosine_similarity(a, b):
     norm_b = sum(y*y for y in b)**0.5
     return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
-# ---- НОВАЯ ФУНКЦИЯ: очистка HTML для Telegram ----
+# ---- ФУНКЦИЯ: очистка HTML для Telegram ----
 def clean_telegram_html(text: str) -> str:
     """
     Удаляет все HTML-теги, кроме разрешённых Telegram.
     Оставляет: <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>, <a>, <code>, <pre>, <span>
     """
     allowed_tags = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'a', 'code', 'pre', 'span']
-    # Удаляем все открывающие и закрывающие теги, которые не входят в разрешённый список
-    # Простая регулярка: ищем теги, кроме разрешённых
     pattern = re.compile(r'</?(?!(' + '|'.join(allowed_tags) + r')\b)[^>]+>', re.IGNORECASE)
     return pattern.sub('', text)
+
+# ---- НОВАЯ ФУНКЦИЯ: форматирование даты публикации ----
+def format_pub_date(pub_date_str: str) -> str:
+    """Преобразует строку с датой в читаемый формат (день.месяц.год час:минута)."""
+    if not pub_date_str:
+        return "дата неизвестна"
+    try:
+        # Пробуем ISO-формат (например, 2026-09-07T14:30:00+00:00)
+        pub_date_str = pub_date_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(pub_date_str)
+        # Переводим в московское время (UTC+3)
+        msk_tz = timezone(timedelta(hours=3))
+        dt_msk = dt.astimezone(msk_tz)
+        return dt_msk.strftime('%d.%m.%Y %H:%M')
+    except:
+        # Если не удалось распарсить, возвращаем исходную строку
+        return pub_date_str
 
 # ---- ПОЛУЧЕНИЕ НОВОСТЕЙ ИЗ RSS ----
 def get_news_from_rss():
@@ -272,23 +266,24 @@ async def main():
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Все новости отклонены семантикой.")
             return
 
-    # ---- ОТПРАВКА НОВОСТЕЙ (С ОЧИСТКОЙ HTML) ----
+    # ---- ОТПРАВКА НОВОСТЕЙ (С ДАТОЙ И ВРЕМЕНЕМ) ----
     sent_count = 0
     for a in new_articles[:MAX_ARTICLES_TO_SEND]:
         # Очищаем описание от недопустимых тегов
         description = a.get('description', '') or ''
         description = clean_telegram_html(description)
-        # Обрезаем до 500 символов для краткости
         if len(description) > 500:
             description = description[:500] + '...'
 
-        caption = f"<b>{a['title']}</b>\n\n{description}\n\n🔗 <a href='{a['url']}'>Читать полностью</a>"
+        # Форматируем дату публикации
+        pub_date = format_pub_date(a.get('publishedAt', ''))
 
-        # Отладочный вывод
+        # Формируем сообщение с датой
+        caption = f"<b>{a['title']}</b>\n\n{description}\n\n📅 {pub_date}\n🔗 <a href='{a['url']}'>Читать полностью</a>"
+
         print(f"📤 Отправляю: {a['title'][:50]}...")
 
         try:
-            # Используем HTML-разметку (теперь безопасную)
             await bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=caption,
