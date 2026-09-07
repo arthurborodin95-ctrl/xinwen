@@ -108,21 +108,18 @@ def clean_telegram_html(text: str) -> str:
     pattern = re.compile(r'</?(?!(' + '|'.join(allowed_tags) + r')\b)[^>]+>', re.IGNORECASE)
     return pattern.sub('', text)
 
-# ---- НОВАЯ ФУНКЦИЯ: форматирование даты публикации ----
+# ---- ФУНКЦИЯ: форматирование даты публикации ----
 def format_pub_date(pub_date_str: str) -> str:
     """Преобразует строку с датой в читаемый формат (день.месяц.год час:минута)."""
     if not pub_date_str:
         return "дата неизвестна"
     try:
-        # Пробуем ISO-формат (например, 2026-09-07T14:30:00+00:00)
         pub_date_str = pub_date_str.replace('Z', '+00:00')
         dt = datetime.fromisoformat(pub_date_str)
-        # Переводим в московское время (UTC+3)
         msk_tz = timezone(timedelta(hours=3))
         dt_msk = dt.astimezone(msk_tz)
         return dt_msk.strftime('%d.%m.%Y %H:%M')
     except:
-        # Если не удалось распарсить, возвращаем исходную строку
         return pub_date_str
 
 # ---- ПОЛУЧЕНИЕ НОВОСТЕЙ ИЗ RSS ----
@@ -166,7 +163,6 @@ def get_news_from_rss():
                 })
         except Exception as e:
             print(f"Ошибка RSS {feed_url}: {e}")
-    # Сортировка по дате (новые сверху)
     all_articles.sort(
         key=lambda a: datetime.fromisoformat(a.get('publishedAt', '').replace('Z', '+00:00')) if a.get('publishedAt') else datetime.min,
         reverse=True
@@ -178,7 +174,6 @@ async def main():
     init_db()
     print("✅ БД инициализирована")
 
-    # Загружаем эталонные векторы
     topic_embeddings = get_all_topic_embeddings()
     use_semantic = bool(topic_embeddings)
     if use_semantic:
@@ -195,7 +190,6 @@ async def main():
 
     all_news = get_news_from_rss()
 
-    # Фильтр по времени
     time_limit = datetime.now(timezone.utc) - timedelta(hours=MAX_HOURS_OLD)
     filtered_by_time = []
     for a in all_news:
@@ -209,7 +203,6 @@ async def main():
     all_news = filtered_by_time
     print(f"После фильтрации времени осталось {len(all_news)} статей.")
 
-    # Фильтр по ключевым словам и исключениям
     filtered = []
     for a in all_news:
         text = normalize_text(a['title'] + ' ' + a['description'])
@@ -222,7 +215,6 @@ async def main():
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новостей не найдено.")
         return
 
-    # Дедупликация по хешу
     new_articles = []
     for a in filtered:
         raw = normalize_text(a['title'] + ' ' + a['description'])[:500]
@@ -236,7 +228,6 @@ async def main():
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Новых статей нет (все уже были сегодня).")
         return
 
-    # Семантическая фильтрация (если включена)
     final_articles = []
     semantic_passed = 0
     semantic_failed = 0
@@ -266,20 +257,16 @@ async def main():
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text="📭 Все новости отклонены семантикой.")
             return
 
-    # ---- ОТПРАВКА НОВОСТЕЙ (С ДАТОЙ И ВРЕМЕНЕМ) ----
+    # ---- ОТПРАВКА НОВОСТЕЙ (БЕЗ HTML-РАЗМЕТКИ) ----
     sent_count = 0
     for a in new_articles[:MAX_ARTICLES_TO_SEND]:
-        # Очищаем описание от недопустимых тегов
         description = a.get('description', '') or ''
         description = clean_telegram_html(description)
         if len(description) > 500:
             description = description[:500] + '...'
 
-        # Форматируем дату публикации
         pub_date = format_pub_date(a.get('publishedAt', ''))
-
-        # Формируем сообщение с датой
-        caption = f"<b>{a['title']}</b>\n\n{description}\n\n📅 {pub_date}\n🔗 <a href='{a['url']}'>Читать полностью</a>"
+        caption = f"{a['title']}\n\n{description}\n\n📅 {pub_date}\n🔗 {a['url']}"
 
         print(f"📤 Отправляю: {a['title'][:50]}...")
 
@@ -287,7 +274,7 @@ async def main():
             await bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=caption,
-                parse_mode='HTML',
+                parse_mode=None,
                 disable_web_page_preview=True
             )
             mark_article_sent(a['url'], a['title'], a['source'].get('name', ''), a.get('_hash', ''))
@@ -295,21 +282,7 @@ async def main():
             print(f"   ✅ Отправлено ({sent_count})")
         except Exception as e:
             print(f"   ❌ Ошибка отправки: {e}")
-            # Попытка отправить без HTML-разметки
-            try:
-                await bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=caption,
-                    parse_mode=None,
-                    disable_web_page_preview=True
-                )
-                mark_article_sent(a['url'], a['title'], a['source'].get('name', ''), a.get('_hash', ''))
-                sent_count += 1
-                print(f"   ✅ Отправлено (plain text) ({sent_count})")
-            except Exception as e2:
-                print(f"   ❌ Критическая ошибка отправки: {e2}")
 
-    # ---- УВЕДОМЛЕНИЕ О ЗАВЕРШЕНИИ ----
     avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
     save_session_stats(
         total_found=len(all_news),
