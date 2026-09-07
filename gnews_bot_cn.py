@@ -100,14 +100,6 @@ RSS_FEEDS = [
     "https://www.scmp.com/rss/",                         # South China Morning Post
     "https://rsshub.app/cnbc/rss/",                      # CNBC (через RSSHub)
 
-    # ===== Официальные государственные =====
-    "http://www.cbr.ru/rss/RssNews",                     # ЦБ РФ (новости)
-    "http://www.cbr.ru/rss/RssPress",                    # ЦБ РФ (пресс-релизы)
-    "https://www.economy.gov.ru/rss",                    # Минэкономразвития
-    "https://minpromtorg.gov.ru/rss/",                   # Минпромторг
-    "http://www.customs.ru/rss/",                        # ФТС РФ
-    "https://www.ved.gov.ru/rss/",                       # Журнал "Внешняя торговля"
-
     # ===== Логистика и промышленность =====
     "https://www.logistics.ru/rss",                      # Логистика
     "https://www.rzd-partner.ru/rss/",                   # РЖД-Партнёр
