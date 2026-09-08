@@ -1,12 +1,12 @@
 name: News Bot
-run: gnews_bot_cn.py
+
 on:
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write   # обязательно для push
+  contents: write
 
 jobs:
   run-bot:
@@ -49,7 +49,6 @@ jobs:
           source venv/bin/activate
           python main.py
 
-      # ---- УПРОЩЁННЫЙ ШАГ КОММИТА БЕЗ PULL ----
       - name: Commit and push database
         run: |
           git config --local user.email "action@github.com"
