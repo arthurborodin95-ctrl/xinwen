@@ -47,7 +47,7 @@ jobs:
           GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
         run: |
           source venv/bin/activate
-          python main.py
+          python gnews_bot_cn.py
 
       - name: Commit and push database
         run: |
