@@ -1,5 +1,4 @@
-  name: News bot
-  run: python gnews_bot_cn.py
+name: News Bot
 
 on:
   schedule:
