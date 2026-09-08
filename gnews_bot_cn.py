@@ -175,7 +175,7 @@ async def main():
     print("✅ БД инициализирована")
 
     topic_embeddings = get_all_topic_embeddings()
-    use_semantic = bool(topic_embeddings)
+    use_semantic = False
     if use_semantic:
         print(f"✅ Загружено {len(topic_embeddings)} эталонных векторов.")
     else:
