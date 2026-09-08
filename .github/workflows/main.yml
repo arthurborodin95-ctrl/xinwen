@@ -1,4 +1,4 @@
-- name: Run bot
+  name: News bot
   run: python gnews_bot_cn.py
 
 on:
