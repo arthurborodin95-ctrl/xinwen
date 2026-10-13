@@ -27,15 +27,15 @@ jobs:
         uses: actions/cache@v3
         with:
           path: venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-venv-v2-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-venv-
+            ${{ runner.os }}-venv-v2-
 
       - name: Install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           python -m venv venv
           source venv/bin/activate
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run bot
@@ -56,11 +56,11 @@ jobs:
           if [ -f news.db ]; then
             git add news.db
             if git diff --staged --quiet; then
-              echo "✅ База данных не изменилась, коммит не требуется."
+              echo "✅ База данных не изменилась"
             else
               git commit -m "Update news database"
               git push
             fi
           else
-            echo "⚠️ news.db не найден, пропускаем коммит."
+            echo "⚠️ news.db не найден"
           fi
